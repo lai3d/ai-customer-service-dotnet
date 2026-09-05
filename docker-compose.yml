@@ -68,9 +68,27 @@ services:
       TRACING_SAMPLE_RATE: ${TRACING_SAMPLE_RATE:-1.0}
       TRACE_INCLUDE_QUERY_CONTENT: ${TRACE_INCLUDE_QUERY_CONTENT:-false}
       LOG_LEVEL: ${LOG_LEVEL:-Information}
+      # The operations admin API. Off unless enabled; the seed creates the first admin into
+      # an empty staff_account table and never touches an existing one.
+      ADMIN_ENABLED: ${ADMIN_ENABLED:-false}
+      ADMIN_SEED_USERNAME: ${ADMIN_SEED_USERNAME:-}
+      ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:-}
+      ADMIN_SESSION_TIMEOUT: ${ADMIN_SESSION_TIMEOUT:-30m}
+      ADMIN_CORS_ORIGINS: ${ADMIN_CORS_ORIGINS:-}
     # Must stay above the application's own SHUTDOWN_GRACE (30s), or the container is
     # killed part-way through the grace period it was given.
     stop_grace_period: 45s
+
+  # The operations UI: its own image, its own container, its own port. It reaches the
+  # service only through nginx's /api proxy, so the browser sees one origin.
+  admin-ui:
+    build:
+      context: admin-ui
+    container_name: csagent-dotnet-admin-ui
+    depends_on:
+      - app
+    ports:
+      - "8083:8083"
 
 volumes:
   pgdata:

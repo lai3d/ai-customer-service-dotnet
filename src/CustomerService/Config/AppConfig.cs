@@ -10,7 +10,8 @@ public sealed record AppConfig(
     ChatConfig Chat,
     RagConfig Rag,
     CostConfig Cost,
-    ObsConfig Obs)
+    ObsConfig Obs,
+    AdminConfig Admin)
 {
     /// <summary>Loads configuration from the process environment.</summary>
     public static AppConfig Load() => Load(Environment.GetEnvironmentVariable);
@@ -72,7 +73,9 @@ public sealed record AppConfig(
                 OtlpEndpoint: e.Str("OTLP_TRACING_ENDPOINT", "http://localhost:4318"),
                 OtlpEnabled: e.Bool("OTLP_TRACING_EXPORT_ENABLED", false),
                 TraceSampling: e.Double("TRACING_SAMPLE_RATE", 1.0),
-                IncludeQueryContent: e.Bool("TRACE_INCLUDE_QUERY_CONTENT", false)));
+                IncludeQueryContent: e.Bool("TRACE_INCLUDE_QUERY_CONTENT", false)),
+            Admin: AdminConfig.From(e.Bool("ADMIN_ENABLED", false), e.Raw("ADMIN_SEED_USERNAME"), e.Raw("ADMIN_SEED_PASSWORD"),
+                e.Duration("ADMIN_SESSION_TIMEOUT", TimeSpan.FromMinutes(30)), e.Str("ADMIN_CORS_ORIGINS", "")));
     }
 
     static (string model, string? apiKey, string baseUrl, string keyVar) ResolveProvider(string provider, Env e) =>
@@ -200,6 +203,34 @@ public sealed record ObsConfig(
     // to disable it. Nothing here does that by default; this switch exists so the choice
     // is deliberate rather than accidental.
     bool IncludeQueryContent);
+
+/// <summary>
+/// The operations surface. Off unless configured: with ADMIN_ENABLED unset the admin routes
+/// are never registered, and /api/admin/v1/* is a 404 the way any unknown path is -- not a
+/// 401 from a guard. A guard is a thing that can be misconfigured; an absent route cannot be.
+/// </summary>
+public sealed record AdminConfig(
+    bool Enabled,
+    // Create the first admin at startup, only into an empty staff_account table. Never
+    // overwrites or resets an account; safe to leave set. One without the other refuses to start.
+    string? SeedUsername,
+    string? SeedPassword,
+    // Idle timeout of a staff session. There is no absolute lifetime and no concurrent-session limit.
+    TimeSpan SessionTimeout,
+    // Origins the separately deployed admin UI is served from, for CORS. Empty when the UI
+    // is proxied through the same origin, which is what the Compose stack does.
+    IReadOnlyList<string> CorsOrigins)
+{
+    public static AdminConfig From(bool enabled, string? seedUser, string? seedPassword, TimeSpan timeout, string origins)
+    {
+        if (string.IsNullOrEmpty(seedUser) != string.IsNullOrEmpty(seedPassword))
+            throw new ConfigException("ADMIN_SEED_USERNAME and ADMIN_SEED_PASSWORD must be set together");
+        if (!string.IsNullOrEmpty(seedPassword) && seedPassword.Length < 12)
+            throw new ConfigException("ADMIN_SEED_PASSWORD must be at least 12 characters: it is the credential for every customer conversation in the database");
+        return new AdminConfig(enabled, string.IsNullOrEmpty(seedUser) ? null : seedUser, string.IsNullOrEmpty(seedPassword) ? null : seedPassword,
+            timeout, origins.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+}
 
 public static class Durations
 {

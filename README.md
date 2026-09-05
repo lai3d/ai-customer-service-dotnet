@@ -35,6 +35,8 @@ found a defect here, that is recorded too.
 | The Anthropic SDK's enum `ToString()` keeps the JSON quotes, a loop compared against `tool_use` and stopped after one call, and a table of expected frame counts was what caught it | [Chat providers](docs/providers.md#what-only-a-live-call-found) |
 | In-process embedding needs no native build step on .NET — ONNX Runtime ships in a NuGet package — and costs a tokenizer instead | [Retrieval](docs/retrieval.md) |
 | The three score populations overlap here exactly as they did in Go, so the threshold is 0 for the same measured reason | [Retrieval](docs/retrieval.md#no-similarity-threshold-is-worth-setting-with-this-model) |
+| The enum-as-integer bug arrived a third time, through the admin API this time, and a test that reads JSON the way the separated UI does caught it before a browser was opened | [The operations surface](docs/operations-admin.md#the-bug-that-arrived-through-a-third-door) |
+| Claim and release did nothing: a React handler read state it had just set. The five actions that open a form worked; the two that act on a bare click were exactly the two that failed, and only a real browser showed it | [The operations surface](docs/operations-admin.md#verified-in-a-browser-and-what-it-found) |
 
 ---
 
@@ -132,8 +134,9 @@ make deps                    # the 470 MB embedding model, once
 cp .env.example .env
 $EDITOR .env                 # set ANTHROPIC_API_KEY
 
-docker compose up -d         # Postgres 5434, Jaeger 16688, the app on 8082
+docker compose up -d         # Postgres 5434, Jaeger 16688, the app on 8082, the admin UI on 8083
 open http://localhost:8082   # the demo UI
+open http://localhost:8083   # the operations UI, once ADMIN_ENABLED and a seed are set (docs/operations-admin.md)
 ```
 
 Or run the app from source against just the database:
@@ -236,6 +239,7 @@ Two model calls, because the model asked for the tool and then answered with its
 | [Observability](docs/observability.md) | GenAI spans over OTLP, the misplaced tool span, and grepping the backend for customer text |
 | [Footprint](docs/footprint.md) | What the image and the process cost, and which numbers are not yet comparable |
 | [The demo UI](docs/demo-ui.md) | The Go implementation's glass box, shared on purpose |
+| [The operations surface](docs/operations-admin.md) | Staff login, the ticket loop, turn records, answer feedback and audit, with the frontend deployed separately |
 
 ---
 
@@ -246,8 +250,15 @@ Verified live against `claude-opus-5`, `gpt-5` and `grok-4.6`, in English and in
 each answers the order question from the corpus, calls `lookup_order_status` and uses its
 result, and reports usage per model call that reaches the budget, the meters and the spans.
 Traces arrive in Jaeger with `gen_ai.usage.*` and per-tool spans and carry no customer text,
-checked by grepping the backend. Over eighty tests, no API key, real pgvector and the real
+checked by grepping the backend. Over a hundred tests, no API key, real pgvector and the real
 embedding model throughout.
+
+The operations surface is verified live too: a real turn in which the customer asks for a human
+raised `TKT-4701` through `create_support_ticket`, and a support account claimed, noted,
+resolved and closed it through the API behind the separately deployed UI, with the stale
+version refused as a `409`, the missing conclusion as a `422`, and both the refusal and the
+conversation view in the audit. The UI was then driven in a real Chrome through every page and
+a full ticket cycle; the one defect it found is recorded.
 
 **What is not done, stated rather than implied:**
 
@@ -259,6 +270,9 @@ embedding model throughout.
   bounded on reasoning, not on a number.
 - **The demo page is the Go implementation's and has not been driven in a browser here.**
   The wire contract it consumes has been.
+- **Knowledge editing and publication is not built**, as in both siblings: it changes the one
+  fixture that keeps the three implementations comparable. Answer feedback stops at a
+  conclusion.
 - **No Gemini.** Three providers, not four, as in Go.
 - **The per-conversation lock and the ticket cap are per process**, as in the siblings.
 - **`top-k: 8` is inherited, not re-measured.**
@@ -266,10 +280,11 @@ embedding model throughout.
   whether the answer built from it was good.
 - **No dual-target deployment.** The Java implementation can run as one process or as
   `chat`, `knowledge` and `ticket` roles (its ADR 001). This implementation is one process.
-- **No admin surface**, for the reason the Go repository gives: it is the same decision as
-  authentication, and both are out of scope.
+- **The admin UI's browser walk is a script run by hand, not a CI job.** One operator, one
+  ticket, one browser; the conflict path between two people is tested and `curl`ed, not clicked.
 
-Deliberately out of scope: authentication, multi-tenancy, MCP.
+Deliberately out of scope: customer authentication, multi-tenancy, MCP. Staff authentication
+exists, because the operations surface shows customer conversations.
 
 ---
 
@@ -278,14 +293,16 @@ Deliberately out of scope: authentication, multi-tenancy, MCP.
 
 ```
 ├── Dockerfile                 # 3 stages; the model baked in, no runtime downloads
-├── docker-compose.yml         # Postgres, Jaeger, the app -- ports avoid the siblings'
+├── docker-compose.yml         # Postgres, Jaeger, the app, the admin UI -- ports avoid the siblings'
+├── admin-ui/                  # the operations UI: Vite + React + TypeScript, its own image on 8083
 ├── corpus/faq.json            # byte-identical to the Java and Go implementations'
 ├── scripts/
 │   ├── dotnet.sh              # the SDK in a container when none is installed
 │   └── fetch-deps.sh          # the honest cost of an in-process model
 ├── src/CustomerService/
 │   ├── Program.cs             # wiring, health, graceful shutdown
-│   ├── Chat/                  # a turn, in order: memory, retrieval, the tool loop
+│   ├── Admin/                 # staff accounts, sessions, audit, conversations, feedback
+│   ├── Chat/                  # a turn, in order: memory, retrieval, the tool loop, the turn record
 │   ├── Config/                # every tunable, with the reasoning next to it
 │   ├── Cost/                  # conversation budget and prices
 │   ├── HttpApi/               # validation, SSE, problem+json, the embedded demo page
@@ -293,6 +310,7 @@ Deliberately out of scope: authentication, multi-tenancy, MCP.
 │   ├── Obs/                   # metrics and traces
 │   ├── Rag/                   # corpus, tokenizer, ONNX embedder, pgvector, retriever
 │   ├── Store/                 # data source and schema
+│   ├── Tickets/               # tickets in Postgres: the tool's creation path and the workflow
 │   └── Tools/                 # order lookup, support tickets
 └── tests/CustomerService.Tests/
     ├── tokenizer-fixture.json # token ids from the Rust tokenizer, 74 cases

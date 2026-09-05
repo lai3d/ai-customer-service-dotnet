@@ -1,5 +1,6 @@
 // The AI customer service backend: wiring, health, graceful shutdown.
 using System.Net;
+using CustomerService.Admin;
 using CustomerService.Chat;
 using CustomerService.Config;
 using CustomerService.Cost;
@@ -8,6 +9,7 @@ using CustomerService.Llm;
 using CustomerService.Obs;
 using CustomerService.Rag;
 using CustomerService.Store;
+using CustomerService.Tickets;
 using CustomerService.Tools;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
@@ -79,6 +81,14 @@ var metrics = new CustomerService.Obs.Metrics();
 DotNetStats.Register(metrics.Registry);
 builder.Services.AddSingleton(metrics);
 
+if (cfg.Admin.Enabled && cfg.Admin.CorsOrigins.Count > 0)
+{
+    // Only for an admin UI served from another origin. The Compose stack proxies the UI's
+    // /api through nginx, so nothing is cross-origin there and this stays off.
+    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+        .WithOrigins(cfg.Admin.CorsOrigins.ToArray()).AllowAnyHeader().AllowAnyMethod()));
+}
+
 var app = builder.Build();
 var log = app.Logger;
 
@@ -92,18 +102,41 @@ if (cfg.Rag.IngestOnStartup)
     await Ingest.RunAsync(cfg.Rag.CorpusPath, embedder, vectors, log, startup.Token);
 
 var model = ChatModels.Create(cfg.Chat);
+var tickets = new TicketStore(db);
+var recorder = new PostgresTurnRecorder(db);
+// Turns still "running" from a process that died are marked interrupted, never invented.
+var recovered = await recorder.RecoverAsync(TimeSpan.FromMinutes(30), startup.Token);
+if (recovered > 0) log.LogWarning("marked {Count} turn records left running by an earlier process as interrupted", recovered);
+
 var service = new ChatService(
     new ConversationMemory(db, cfg.Chat.MaxHistoryMessages),
     new Retriever(embedder, vectors, cfg.Rag.TopK, cfg.Rag.SimilarityThreshold, app.Services.GetRequiredService<ILogger<Retriever>>()),
     model,
     new ConversationBudget(cfg.Cost.ConversationTokenBudget, cfg.Cost.TrackedConversations),
     metrics,
+    recorder,
     cfg.Chat.MaxTokens,
     app.Services.GetRequiredService<ILogger<ChatService>>(),
     new OrderLookup(),
-    new SupportTickets(cfg.Cost.TrackedConversations, app.Services.GetRequiredService<ILogger<SupportTickets>>()));
+    new SupportTickets(tickets, app.Services.GetRequiredService<ILogger<SupportTickets>>()));
 
 app.MapChatEndpoints(service, cfg.Chat, log);
+
+if (cfg.Admin.Enabled)
+{
+    var accounts = new StaffAccounts(db);
+    if (cfg.Admin.SeedUsername is { } seedUser && cfg.Admin.SeedPassword is { } seedPassword)
+    {
+        if (await accounts.SeedAsync(seedUser, seedPassword, startup.Token))
+            log.LogInformation("seeded the first staff account {Username} as admin", seedUser);
+    }
+    var feedback = new Feedback(db);
+    var admin = new AdminServices(accounts, new StaffSessions(db, accounts, cfg.Admin.SessionTimeout), new AdminAudit(db),
+        tickets, new Conversations(db, tickets, feedback), feedback);
+    if (cfg.Admin.CorsOrigins.Count > 0) app.UseCors();
+    app.MapAdminEndpoints(admin, cfg.Admin, log);
+    log.LogInformation("operations admin API enabled at {Prefix}", AdminEndpoints.Prefix);
+}
 app.MapMetrics("/metrics", metrics.Registry);
 app.MapDemoPage();
 app.MapGet("/healthz", () => Results.Text("{\"status\":\"UP\"}\n", "application/json"));

@@ -68,4 +68,46 @@ public class DeploymentTests
             System.Text.Encoding.UTF8.GetBytes(Chat.ChatService.SystemPrompt)));
         Assert.Equal("c3fc1181c3df5d85bfbaeeaa05c1aeac554235b5b6b08170527b1a7255ab5614", hash);
     }
+
+    // ---- the separately deployed UI -----------------------------------------------------
+
+    /// <summary>Model and customer text reach the page as text. No sink turns a string into markup.</summary>
+    [Fact]
+    public void TheAdminUiNeverTurnsAStringIntoMarkup()
+    {
+        var files = Directory.GetFiles(Path.Combine(Repo.Root, "admin-ui", "src"), "*.ts*", SearchOption.AllDirectories);
+        Assert.True(files.Length >= 10, "the UI sources should be present");
+        foreach (var f in files)
+        {
+            var code = File.ReadAllText(f);
+            foreach (var sink in new[] { "dangerouslySetInnerHTML", "innerHTML", "document.write", "eval(", "new Function(" })
+                Assert.DoesNotContain(sink, code);
+        }
+    }
+
+    /// <summary>The UI's container proxies the API and forbids scripts from anywhere but itself.</summary>
+    [Fact]
+    public void TheAdminUiIsServedBehindAProxyWithAContentSecurityPolicy()
+    {
+        var nginx = Read("admin-ui/nginx.conf");
+        Assert.Contains("proxy_pass http://app:8082/api/;", nginx);
+        Assert.Contains("try_files $uri /index.html;", nginx);
+        Assert.Matches(@"Content-Security-Policy ""default-src 'self'", nginx);
+        Assert.Contains("\"8083:8083\"", Read("docker-compose.yml"));
+        Assert.Contains("ADMIN_ENABLED", Read("docker-compose.yml"));
+    }
+
+    /// <summary>Every state and action the page knows is one the server knows, by name.</summary>
+    [Fact]
+    public void TheUiAndTheServerAgreeOnTicketStatesAndActions()
+    {
+        var ui = Read("admin-ui/src/tickets.ts");
+        foreach (var state in new[] { "open", "claimed", "resolved", "closed" }) Assert.Contains($"'{state}'", ui);
+        var server = Read("src/CustomerService/HttpApi/AdminEndpoints.cs");
+        foreach (var action in new[] { "claim", "assign", "release", "resolve", "close", "reopen", "note" })
+        {
+            Assert.Contains($"'{action}'", ui);
+            Assert.Contains($"\"{action}\"", server);
+        }
+    }
 }

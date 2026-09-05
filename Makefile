@@ -4,7 +4,7 @@
 
 DOTNET := ./scripts/dotnet.sh
 
-.PHONY: deps build run test publish lint fmt clean
+.PHONY: deps build run test publish lint fmt clean ui-install ui-test ui-build
 
 deps:
 	./scripts/fetch-deps.sh
@@ -30,6 +30,18 @@ lint:
 
 fmt:
 	$(DOTNET) format
+
+# The operations UI. Node on the host if present; otherwise the node:22-alpine container.
+NPM := $(shell command -v npm >/dev/null 2>&1 && echo npm || echo docker run --rm -v "$$PWD/admin-ui":/ui -w /ui node:22-alpine npm)
+
+ui-install:
+	cd admin-ui && $(NPM) install --no-audit --no-fund
+
+ui-test: ui-install
+	cd admin-ui && $(NPM) run typecheck && $(NPM) test
+
+ui-build: ui-install
+	cd admin-ui && $(NPM) run build
 
 clean:
 	rm -rf src/CustomerService/bin src/CustomerService/obj tests/CustomerService.Tests/bin tests/CustomerService.Tests/obj publish

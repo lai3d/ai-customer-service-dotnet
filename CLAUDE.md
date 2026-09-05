@@ -150,6 +150,29 @@ none is needed.
 - **`README.md` and `README.zh.md` are a pair.** `BothReadmesHaveTheSameSectionStructure`
   compares heading-level sequences, which is the drift that actually happens.
 
+## The operations surface
+
+`/api/admin/v1/**` and `admin-ui/` are the operations admin, built 2026-09-06 with the
+frontend deployed separately at the owner's request; `docs/operations-admin.md` records the
+decisions and where they differ from the siblings'. Rules:
+
+- **Admin routes exist only when `ADMIN_ENABLED=true`.** Off, they are 404s. Do not add a guard
+  that turns them into 401s when disabled.
+- **Every mutation takes `expectedVersion`, required.** A stale one is a 409 and writes
+  nothing; a broken rule is a 422 and is audited; a 403 is audited with the method and path.
+- **The conclusion lives on the resolving `ticket_event`, never on the ticket row.** Reopen
+  clears the owner and requires a reason.
+- **Reading a conversation writes an audit row.** Nothing edits or deletes `admin_audit`.
+- **The turn record opens before the model call and closes in the `finally`.** Opening failure
+  fails the turn; closing failure is logged. Cancellation is classified before any step that
+  noticed it, or a customer closing the tab is recorded as the database breaking.
+- **Enums by name everywhere JSON leaves the process.** `ToolJson.Options` and
+  `ChatEndpoints.Json` both carry the converter; the bug has now arrived through tool results,
+  the siblings' dates and the admin API. Any new serializer options must too.
+- **The UI reads only what the API sends.** No `dangerouslySetInnerHTML`; the markdown subset
+  builds elements; the session token is a bearer in `sessionStorage`. `admin-ui` has its own
+  `npm test` and typecheck, run by the `admin-ui` CI job and `make ui-test`.
+
 ## Measurements, and how to change one
 
 `docs/` holds one document per decision and every number in it was produced by a test or a
