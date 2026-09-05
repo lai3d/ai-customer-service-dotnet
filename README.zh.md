@@ -30,7 +30,8 @@ Anthropic Claude，可通过配置切换到 OpenAI 或 xAI。
 | .NET 上的进程内嵌入不需要原生构建步骤——ONNX Runtime 随 NuGet 包到位——代价换成了要自己写分词器 | [检索](docs/retrieval.md) |
 | 三个得分分布在这里的重叠与 Go 完全一致，所以阈值同样因测量而设为 0 | [检索](docs/retrieval.md#no-similarity-threshold-is-worth-setting-with-this-model) |
 | 枚举写成整数的 bug 第三次出现，这次经由管理 API；一个像分离前端那样读 JSON 文本的测试在打开浏览器之前就抓住了它 | [运营界面](docs/operations-admin.md#the-bug-that-arrived-through-a-third-door) |
-| 用 DELETE 重新导入语料会把旧行留在 HNSW 索引里当死条目，三十次重载后索引扫描在 36 行活数据上返回零行；测试套件约每四次遇到一次「检索证据为空」，改成 TRUNCATE 后消失 | [检索](docs/retrieval.md#the-hnsw-index-remembers-what-you-deleted) |
+| 一千并发下，ONNX Runtime 每次前向传播各开一个线程池的默认设置让 18 核上跑了 73 个 OS 线程；改为单线程后 p50 从 3451 ms 降到 1843 ms，而 .NET 的失效形态是旁观请求的延迟，Go 的是线程数 | [基准测试](docs/benchmark.md) |
+| 用 DELETE 重新导入语料会把旧行留在 HNSW 索引里当死条目：相同向量重载三十次后索引扫描在 36 行活数据上返回零行，不同向量重载六十次后 8 行只回 7 行；测试套件约每四次遇到一次，两个兄弟仓库都复测了，改成 TRUNCATE 后消失 | [检索](docs/retrieval.md#the-hnsw-index-remembers-what-you-deleted) |
 | 在 kind 上，.NET 进程用 637 MiB 匿名内存装下同一个 470 MB 模型，Go 是 951，Java 超过 1400；Java 那一段差距有解释，Go 与 .NET 之间的那一段还没有人解释 | [体积](docs/footprint.md#memory-measured-on-kind) |
 | 认领和释放按钮什么也不做：React 处理函数读回了自己刚设的状态。五个先弹表单的操作都正常，两个直接点击的恰恰失败，只有真实浏览器看得见 | [运营界面](docs/operations-admin.md#verified-in-a-browser-and-what-it-found) |
 
@@ -224,6 +225,7 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 | [工具调用](docs/tools.md) | 为什么找不到的订单是一个值、为什么会话身份是参数、为什么工具结果也是提示词 |
 | [可观测性](docs/observability.md) | OTLP 上的 GenAI span、错位的工具 span，以及在后端 grep 客户文本 |
 | [体积](docs/footprint.md) | 镜像和进程的开销，在 kind 上与 Go、Java 的数字并排测量 |
+| [基准测试](docs/benchmark.md) | 一千并发请求打向线程池，以及决定一次原生调用代价的两个开关 |
 | [Kubernetes](k8s/README.md) | 清单由校验脚本在 kind 上原样 apply 并断言二十五件事，以及为它定尺寸的内存扫描 |
 | [演示页面](docs/demo-ui.md) | Go 实现的「玻璃盒」，刻意共用 |
 | [运营界面](docs/operations-admin.md) | 员工登录、工单闭环、轮次记录、回答反馈与审计，前端独立部署 |
@@ -243,8 +245,8 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 **尚未完成的事，直说而不是暗示：**
 
 - **Kubernetes 清单在 kind 上验证过，没上过真实集群。** 一次性集群上二十五项断言；没有生产集群见过它们，而且大多数断言还没被看到变红——[k8s/README.md](k8s/README.md#which-assertions-have-been-seen-to-fail) 维护着这份清单。
-- **没有基准测试。** Go 实现测过 goroutine 对 Loom；这里对应的问题——一波阻塞的原生调用会对 .NET
-  线程池做什么——是这个运行时最值得问的，而它还没被测量。嵌入器的限流依据是推理，不是数字。
+- **基准测试跑在虚拟机里，不在宿主机上。** Java 和 Go 的行是原生测的；这台机器刻意没装 .NET
+  SDK，所以 .NET 的行跑在 Docker Desktop 里的 SDK 容器中。同一块芯片、不同的操作系统、中间隔着一层虚拟化——先把 .NET 的行互相比较。
 - **演示页面来自 Go 实现，这里尚未在浏览器中驱动过。** 它消费的线路契约已经验证。
 - **知识编辑与发布未做**，与两个兄弟仓库一致：它会改动让三个实现可比的那份唯一夹具。回答反馈止于一条结论。
 - **没有 Gemini。** 三家提供商，不是四家，与 Go 一致。

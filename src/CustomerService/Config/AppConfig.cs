@@ -65,7 +65,8 @@ public sealed record AppConfig(
                 SimilarityThreshold: e.Double("RAG_SIMILARITY_THRESHOLD", 0),
                 QueryPrefix: e.Str("EMBEDDING_QUERY_PREFIX", "query: "),
                 PassagePrefix: e.Str("EMBEDDING_PASSAGE_PREFIX", "passage: "),
-                MaxConcurrentEmbeddings: e.Int("EMBEDDING_MAX_CONCURRENCY", 0)),
+                MaxConcurrentEmbeddings: e.Int("EMBEDDING_MAX_CONCURRENCY", 0),
+                IntraOpThreads: e.Int("EMBEDDING_INTRA_OP_THREADS", 1)),
             Cost: new CostConfig(
                 ConversationTokenBudget: e.Int("CONVERSATION_TOKEN_BUDGET", 200_000),
                 TrackedConversations: e.Int("TRACKED_CONVERSATIONS", 10_000)),
@@ -187,7 +188,13 @@ public sealed record RagConfig(
     // processor count. The work is CPU-bound, so admitting more than there are cores
     // buys thread-pool threads and nothing else -- and a thread blocked in native code is
     // one the pool's hill-climbing has to notice and replace.
-    int MaxConcurrentEmbeddings);
+    int MaxConcurrentEmbeddings,
+    // Threads ONNX Runtime may use inside one forward pass. 1, and that is a measurement:
+    // the runtime's default is the core count, and under concurrent queries every caller's
+    // pass brings its own core-count of threads -- eighteen concurrent queries contending
+    // on eighteen cores with three hundred threads. With 1 the benchmark's p50 fell from
+    // 3451 ms to 1843 ms. 0 restores the runtime's default. See docs/benchmark.md.
+    int IntraOpThreads);
 
 public sealed record CostConfig(
     // A conversation is an open-ended bill unless capped: a message window bounds any

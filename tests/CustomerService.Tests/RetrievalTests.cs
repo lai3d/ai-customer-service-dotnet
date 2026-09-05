@@ -186,9 +186,10 @@ public class RetrievalMeasurements(Postgres384 pg)
     {
         Assert.SkipUnless(Repo.ModelPresent, "embedding model not present; run scripts/fetch-deps.sh");
         var output = TestContext.Current.TestOutputHelper!;
+        int? intra = int.TryParse(Environment.GetEnvironmentVariable("BENCH_ORT_INTRA"), out var n) ? n : null;
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        using var embedder = new OnnxEmbedder(new OnnxOptions(Repo.ModelPath, Repo.TokenizerPath, 384, "query: ", "passage: "));
-        output.WriteLine($"session start: {sw.ElapsedMilliseconds} ms");
+        using var embedder = new OnnxEmbedder(new OnnxOptions(Repo.ModelPath, Repo.TokenizerPath, 384, "query: ", "passage: ", intra));
+        output.WriteLine($"session start: {sw.ElapsedMilliseconds} ms (intra-op threads: {intra?.ToString() ?? "runtime default"})");
 
         await embedder.EmbedQueryAsync("warm up", CancellationToken.None);
         var store = new VectorStore(pg.Db);

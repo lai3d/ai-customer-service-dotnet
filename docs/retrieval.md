@@ -56,13 +56,14 @@ second attempt, and the scores below say the rest.
 | --- | --- |
 | Session start (470 MB fp32 model) | 748 ms, once |
 | The whole 36-document corpus embedded and written | 560 ms |
-| One query embedded | **13.7 ms** median (6.9 min, 33.9 max, n=20) |
-| Embed + pgvector search | 22 ms average |
+| One query embedded | **5.8 ms** median with one intra-op thread (7.0 ms with the runtime's default) |
+| Embed + pgvector search | 9.9 ms average (20.8 ms with the runtime's default) |
 
-Measured by `RetrievalMeasurements` inside the .NET SDK container on an arm64 laptop. The Go
+Measured by `RetrievalMeasurements` inside the .NET SDK container on an arm64 laptop; the
+first measurement of this table read 13.7 ms and 22 ms with the runtime's default thread
+count, and [the benchmark](benchmark.md) is where the intra-op setting was chosen. The Go
 implementation reports 2 ms per query on the same machine's host, and the two numbers are
-**not yet comparable**: one is inside a Linux container and one is not, and neither has been
-run beside the other on the same runtime binary. The live trace in
+**not comparable**: one is inside a Linux virtual machine and one is not. The live trace in
 [Observability](observability.md) shows the whole of retrieval at 11 ms of a 5.3-second
 turn, which is the number that matters for a customer.
 
@@ -142,15 +143,37 @@ after VACUUM, index scan:           8 rows
 ```
 
 Zero. Not fewer — none. With autovacuum on it is a race with the daemon, which is why the
-suite saw it one run in four rather than always, and why a deployment that restarts often
-between vacuums — a rollout, a crash loop — would see retrieval degrade and then recover with
-nothing in the logs. The reload is a `TRUNCATE` now, inside the same transaction: it rebuilds
-the index empty, and readers wait on its lock until the new rows are committed, which is the
-right trade for a 36-document load at startup.
+suite saw it one run in four rather than always.
+
+**Both sibling implementations were told on the day, and what came back narrowed the
+finding.** The reproduction above uses the test stub's vectors, which are all identical: a
+degenerate graph where every point sits at distance zero from every other, so the candidates
+the scan collects are all dead copies of the same point. The Go side reproduced it with the
+same stub — 2 of 8 rows after 60 reloads, 8 after `TRUNCATE` or `VACUUM` — and switched to
+`TRUNCATE`. The Java side, with 36 distinct real embeddings under Spring AI's index, saw the
+bloat (864–972 dead tuples, the index doubling in size) and **not** the starvation: 8 of 8
+after 30 reloads. Re-run here with 36 distinct random 384-dimension vectors re-inserted each
+cycle, the way a real reload re-embeds the same corpus:
+
+```
+60 × (BEGIN; DELETE FROM t; INSERT the same 36 distinct rows; COMMIT), autovacuum off
+index scan, query = one of the rows, LIMIT 8:   7 rows
+index scan, random query vector, LIMIT 8:       7 rows
+sequential scan:                                8 rows
+```
+
+So with realistic vectors the effect is degradation — fewer than `LIMIT`, not none — and how
+much depends on how clustered the vectors are. A corpus with near-duplicate passages, which
+this one has in the form of two languages per entry, sits between the two experiments. Why
+the Java count and this one differ at 30 cycles is not known and is labelled that way on
+both sides. The reload is a `TRUNCATE` now, inside the same transaction: it rebuilds the
+index empty, and readers wait on its lock until the new rows are committed, which is the
+right trade for a 36-document load at startup; a deployment that restarts often between
+vacuums — a rollout, a crash loop — would otherwise see retrieval quietly return less than it
+was asked for and recover with nothing in the logs.
 `ReingestingThirtyTimesStillRetrievesEverything` pins it with autovacuum off on the table; it
 is red with `DELETE` and green with `TRUNCATE`, and it was made red on purpose before it was
-kept. Both sibling implementations were told on the day, because the Go `Replace` has the
-same DELETE.
+kept.
 
 ### What is not measured here
 

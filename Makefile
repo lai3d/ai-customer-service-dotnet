@@ -4,7 +4,7 @@
 
 DOTNET := ./scripts/dotnet.sh
 
-.PHONY: deps build run test publish lint fmt clean ui-install ui-test ui-build
+.PHONY: deps build run test bench publish lint fmt clean ui-install ui-test ui-build
 
 deps:
 	./scripts/fetch-deps.sh
@@ -20,6 +20,17 @@ run: deps
 # `make deps` has not run; CI asserts the model is present so a skip cannot pass there.
 test:
 	$(DOTNET) test
+
+# Excluded from `make test` because it measures a machine rather than asserting a
+# behaviour. See docs/benchmark.md. One process per variant, so a variant's thread-pool
+# growth is not inherited by the next.
+BENCH_RUN := $(DOTNET) run --project tests/CustomerService.Tests -c Release -- --filter-class CustomerService.Tests.Benchmark.ConcurrencyUnderLoad --output Detailed
+# A failing variant is a result, not a reason to skip the others.
+bench:
+	-BENCH=1 BENCH_EMBEDDER=onnx $(BENCH_RUN)
+	-BENCH=1 BENCH_EMBEDDER=bounded $(BENCH_RUN)
+	-BENCH=1 BENCH_EMBEDDER=varying $(BENCH_RUN)
+	-BENCH=1 BENCH_EMBEDDER=stub $(BENCH_RUN)
 
 publish:
 	$(DOTNET) publish src/CustomerService -c Release -o publish

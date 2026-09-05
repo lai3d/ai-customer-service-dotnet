@@ -4,7 +4,13 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace CustomerService.Rag;
 
-public sealed record OnnxOptions(string ModelPath, string TokenizerPath, int Dimensions, string QueryPrefix, string PassagePrefix);
+/// <param name="IntraOpThreads">
+/// Threads ONNX Runtime may use inside one forward pass. Null leaves the runtime's default,
+/// which is the core count -- and under concurrent queries every caller's pass brings its own
+/// core-count of threads, so eighteen concurrent queries contend on eighteen cores with three
+/// hundred threads. See docs/benchmark.md for what that measured out to.
+/// </param>
+public sealed record OnnxOptions(string ModelPath, string TokenizerPath, int Dimensions, string QueryPrefix, string PassagePrefix, int? IntraOpThreads = null);
 
 /// <summary>
 /// Runs the embedding model in this process, on the CPU. Anthropic has no embedding API, so
@@ -29,6 +35,7 @@ public sealed class OnnxEmbedder : IEmbedder
         tokenizer = E5Tokenizer.Load(opts.TokenizerPath);
         using var so = new Microsoft.ML.OnnxRuntime.SessionOptions();
         so.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+        if (opts.IntraOpThreads is { } intra) so.IntraOpNumThreads = intra;
         session = new InferenceSession(opts.ModelPath, so);
         Dimensions = opts.Dimensions;
         queryPrefix = opts.QueryPrefix;

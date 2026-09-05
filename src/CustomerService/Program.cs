@@ -94,7 +94,8 @@ var log = app.Logger;
 
 using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 var db = await Database.OpenAsync(cfg.Postgres.ConnectionString(), cfg.Rag.Dimensions, startup.Token);
-var onnx = new OnnxEmbedder(new OnnxOptions(cfg.Rag.ModelPath, cfg.Rag.TokenizerPath, cfg.Rag.Dimensions, cfg.Rag.QueryPrefix, cfg.Rag.PassagePrefix));
+var onnx = new OnnxEmbedder(new OnnxOptions(cfg.Rag.ModelPath, cfg.Rag.TokenizerPath, cfg.Rag.Dimensions, cfg.Rag.QueryPrefix, cfg.Rag.PassagePrefix,
+    cfg.Rag.IntraOpThreads > 0 ? cfg.Rag.IntraOpThreads : null));
 // Bounded on measurement, not on principle: see Rag/BoundedEmbedder.cs.
 IEmbedder embedder = new BoundedEmbedder(onnx, cfg.Rag.MaxConcurrentEmbeddings);
 var vectors = new VectorStore(db);

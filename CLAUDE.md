@@ -202,9 +202,13 @@ edit the number.**
 | No threshold separates the three score populations | `NoSimilarityThresholdIsUseful` |
 | Session start, embed and retrieve timings | `RetrievalMeasurements` (run with `--output Detailed`) |
 | The ticket cap holds under concurrency | `TheCapHoldsUnderConcurrentCalls` |
+| Throughput, latency, pool and OS threads under 1000 concurrent requests | `make bench` (one process per variant; inside the SDK container) |
+| Memory limit sweep and cgroup peaks | `k8s/kind/sweep.sh`, `k8s/kind/verify.sh` footprint block |
 | Live turns, usage per call, trace shape | `docs/reliability.md`, `docs/observability.md` |
 
-`RAG_SIMILARITY_THRESHOLD` is **0**, and that is a measurement, not an omission. If you
+`RAG_SIMILARITY_THRESHOLD` is **0** and `EMBEDDING_INTRA_OP_THREADS` is **1**; both are
+measurements, not omissions -- the second cut the benchmark's p50 by 47% because ONNX
+Runtime's per-pass thread pool oversubscribes the cores under concurrent queries. If you
 change the embedding model, re-measure the threshold, the dimensions, the corpus embeddings
 and the tokenizer fixture together.
 

@@ -40,6 +40,11 @@ public abstract class PostgresFixture(int dimensions) : IAsyncLifetime
             await cmd.ExecuteNonQueryAsync();
         }
         admin.Database = dbName;
+        // The production pool bound, so a test that opens a thousand turns meets the same
+        // limit the service does. Without it Npgsql's default of 100 per data source met the
+        // container's max_connections of 100 head-on: the benchmark's first runs failed a
+        // handful of requests with "53300: sorry, too many clients already".
+        admin.MaxPoolSize = 20;
         ConnectionString = admin.ConnectionString;
         Db = await Database.OpenAsync(ConnectionString, dimensions, CancellationToken.None);
     }
