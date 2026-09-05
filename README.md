@@ -1,5 +1,6 @@
 # AI Customer Service System — .NET
 
+[![CI](https://github.com/lai3d/ai-customer-service-dotnet/actions/workflows/ci.yml/badge.svg)](https://github.com/lai3d/ai-customer-service-dotnet/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](https://dotnet.microsoft.com/)
 
