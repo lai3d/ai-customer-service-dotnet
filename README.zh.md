@@ -29,6 +29,8 @@ Anthropic Claude，可通过配置切换到 OpenAI 或 xAI。
 | Anthropic SDK 的枚举 `ToString()` 带着 JSON 引号，循环和 `tool_use` 比较后只跑了一次调用，抓住它的是一张预期帧数表 | [对话提供商](docs/providers.md#what-only-a-live-call-found) |
 | .NET 上的进程内嵌入不需要原生构建步骤——ONNX Runtime 随 NuGet 包到位——代价换成了要自己写分词器 | [检索](docs/retrieval.md) |
 | 三个得分分布在这里的重叠与 Go 完全一致，所以阈值同样因测量而设为 0 | [检索](docs/retrieval.md#no-similarity-threshold-is-worth-setting-with-this-model) |
+| 枚举写成整数的 bug 第三次出现，这次经由管理 API；一个像分离前端那样读 JSON 文本的测试在打开浏览器之前就抓住了它 | [运营界面](docs/operations-admin.md#the-bug-that-arrived-through-a-third-door) |
+| 认领和释放按钮什么也不做：React 处理函数读回了自己刚设的状态。五个先弹表单的操作都正常，两个直接点击的恰恰失败，只有真实浏览器看得见 | [运营界面](docs/operations-admin.md#verified-in-a-browser-and-what-it-found) |
 
 ---
 
@@ -124,8 +126,9 @@ make deps                    # 470 MB 的嵌入模型，只下一次
 cp .env.example .env
 $EDITOR .env                 # 填入 ANTHROPIC_API_KEY
 
-docker compose up -d         # Postgres 5434、Jaeger 16688、应用 8082
+docker compose up -d         # Postgres 5434、Jaeger 16688、应用 8082、管理前端 8083
 open http://localhost:8082   # 演示页面
+open http://localhost:8083   # 运营界面，需先设置 ADMIN_ENABLED 和种子账号（见 docs/operations-admin.md）
 ```
 
 或者只起数据库，从源码运行应用：
@@ -220,6 +223,7 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 | [可观测性](docs/observability.md) | OTLP 上的 GenAI span、错位的工具 span，以及在后端 grep 客户文本 |
 | [体积](docs/footprint.md) | 镜像和进程的开销，以及哪些数字尚不可比 |
 | [演示页面](docs/demo-ui.md) | Go 实现的「玻璃盒」，刻意共用 |
+| [运营界面](docs/operations-admin.md) | 员工登录、工单闭环、轮次记录、回答反馈与审计，前端独立部署 |
 
 ---
 
@@ -228,7 +232,10 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 
 已针对 `claude-opus-5`、`gpt-5` 和 `grok-4.6` 以中英两种语言实测：每个都能从语料回答订单问题、调用
 `lookup_order_status` 并使用其结果、按模型调用报告用量并送达预算、指标和 span。链路带 `gen_ai.usage.*` 和逐工具 span
-到达 Jaeger，且不含客户文本，已通过 grep 后端核实。八十多个测试，不需要 API 密钥，全程真实 pgvector 和真实嵌入模型。
+到达 Jaeger，且不含客户文本，已通过 grep 后端核实。一百多个测试，不需要 API 密钥，全程真实 pgvector 和真实嵌入模型。
+
+运营界面也已实测：一轮真实对话里客户要求人工，`create_support_ticket` 建出 `TKT-4701`，一个 support
+账号经独立部署的前端背后的 API 认领、备注、解决、关闭；过期版本被拒为 `409`，缺少结论被拒为 `422`，拒绝和查看会话都进了审计。随后在真实 Chrome 里驱动了前端的每一页和一个完整工单周期；找到的那一个缺陷已记录。
 
 **尚未完成的事，直说而不是暗示：**
 
@@ -236,14 +243,15 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 - **没有基准测试。** Go 实现测过 goroutine 对 Loom；这里对应的问题——一波阻塞的原生调用会对 .NET
   线程池做什么——是这个运行时最值得问的，而它还没被测量。嵌入器的限流依据是推理，不是数字。
 - **演示页面来自 Go 实现，这里尚未在浏览器中驱动过。** 它消费的线路契约已经验证。
+- **知识编辑与发布未做**，与两个兄弟仓库一致：它会改动让三个实现可比的那份唯一夹具。回答反馈止于一条结论。
 - **没有 Gemini。** 三家提供商，不是四家，与 Go 一致。
 - **会话锁和工单上限都是单进程的**，与兄弟仓库一致。
 - **`top-k: 8` 是继承的，未重新测量。**
 - **没有评估集。** 检索测量说的是找到了哪段，不是据此写出的回答好不好。
 - **没有多目标部署。** Java 实现可以作为单进程或 `chat`、`knowledge`、`ticket` 角色运行（其 ADR 001）。本实现是单进程。
-- **没有管理界面**，理由与 Go 仓库相同：它和认证是同一个决定，两者都不在范围内。
+- **管理前端的浏览器实测是手动运行的脚本，不是 CI 任务。** 一个操作员、一张工单、一个浏览器；两人冲突路径靠测试和 `curl` 覆盖，没有人点过。
 
-刻意不在范围内：认证、多租户、MCP。
+刻意不在范围内：客户认证、多租户、MCP。员工认证是有的，因为运营界面会展示客户对话。
 
 ---
 
@@ -252,14 +260,16 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 
 ```
 ├── Dockerfile                 # 3 个阶段；模型烘进镜像，运行时不下载
-├── docker-compose.yml         # Postgres、Jaeger、应用 -- 端口避开兄弟仓库
+├── docker-compose.yml         # Postgres、Jaeger、应用、管理前端 -- 端口避开兄弟仓库
+├── admin-ui/                  # 运营前端：Vite + React + TypeScript，独立镜像，8083 端口
 ├── corpus/faq.json            # 与 Java、Go 实现逐字节一致
 ├── scripts/
 │   ├── dotnet.sh              # 没装 SDK 时在容器里运行它
 │   └── fetch-deps.sh          # 进程内模型的真实代价
 ├── src/CustomerService/
 │   ├── Program.cs             # 装配、健康检查、优雅停机
-│   ├── Chat/                  # 一个轮次，按序：记忆、检索、工具循环
+│   ├── Admin/                 # 员工账号、会话、审计、会话查询、反馈
+│   ├── Chat/                  # 一个轮次，按序：记忆、检索、工具循环、轮次记录
 │   ├── Config/                # 每个可调项，理由写在旁边
 │   ├── Cost/                  # 会话预算与价格
 │   ├── HttpApi/               # 校验、SSE、problem+json、内嵌演示页
@@ -267,6 +277,7 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 │   ├── Obs/                   # 指标与链路
 │   ├── Rag/                   # 语料、分词器、ONNX 嵌入器、pgvector、检索器
 │   ├── Store/                 # 数据源与 schema
+│   ├── Tickets/               # Postgres 里的工单：工具的创建路径与人工流程
 │   └── Tools/                 # 订单查询、支持工单
 └── tests/CustomerService.Tests/
     ├── tokenizer-fixture.json # 来自 Rust 分词器的 token id，74 组

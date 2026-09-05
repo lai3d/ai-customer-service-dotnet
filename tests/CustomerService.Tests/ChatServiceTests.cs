@@ -5,6 +5,7 @@ using CustomerService.Llm;
 using CustomerService.Obs;
 using CustomerService.Rag;
 using CustomerService.Tests.Support;
+using CustomerService.Tickets;
 using CustomerService.Tools;
 
 namespace CustomerService.Tests;
@@ -23,7 +24,8 @@ public class ChatServiceTests(Postgres8 pg)
         public VectorStore Store = null!;
         public List<TurnEvent> Events = new();
         public ChatService Service = null!;
-        public List<ITool> Tools = [new OrderLookup(), new SupportTickets(100)];
+        public List<ITool> Tools = new();
+        public PostgresTurnRecorder Recorder = null!;
 
         public async ValueTask Emit(TurnEvent e) { lock (Events) Events.Add(e); }
         public string Reply => string.Concat(Events.OfType<MessageEvent>().Select(m => m.Text));
@@ -38,7 +40,9 @@ public class ChatServiceTests(Postgres8 pg)
         f.Store = new VectorStore(pg.Db);
         if (ingest) await Ingest.RunAsync(Repo.CorpusPath, embedder, f.Store, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, CancellationToken.None);
         f.Memory = new ConversationMemory(pg.Db, 40);
-        f.Service = new ChatService(f.Memory, new Retriever(embedder, f.Store, 8, 0), f.Model, f.Budget, f.Metrics, 1024, null, f.Tools);
+        f.Recorder = new PostgresTurnRecorder(pg.Db);
+        if (f.Tools.Count == 0) f.Tools = [new OrderLookup(), new SupportTickets(new TicketStore(pg.Db))];
+        f.Service = new ChatService(f.Memory, new Retriever(embedder, f.Store, 8, 0), f.Model, f.Budget, f.Metrics, f.Recorder, 1024, null, f.Tools);
         return f;
     }
 
@@ -353,5 +357,84 @@ public class ChatServiceTests(Postgres8 pg)
         var json = JsonSerializer.Serialize<TurnEvent>(f.Events.OfType<UsageEvent>().Single(), HttpApi.ChatEndpoints.Json);
         Assert.DoesNotContain("costUsd", json);
         Assert.DoesNotContain("traceId", json);
+    }
+
+    // ---- the operational record ---------------------------------------------------------
+
+    async Task<(string outcome, string? failure, string? answer, int calls, long input, string? retrieval, string? tools)> Record(string id)
+    {
+        await using var cmd = pg.Db.CreateCommand("SELECT outcome, failure, answer, model_calls, input_tokens, retrieval::text, tools::text FROM conversation_turn WHERE conversation_id = $1 ORDER BY started_at DESC LIMIT 1");
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter { Value = id });
+        await using var r = await cmd.ExecuteReaderAsync();
+        Assert.True(await r.ReadAsync(), "no turn record");
+        return (r.GetString(0), r.IsDBNull(1) ? null : r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetInt32(3), r.GetInt64(4),
+            r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6));
+    }
+
+    /// <summary>
+    /// The record is written where the turn executes, not from the event stream: outcome,
+    /// evidence, tool calls and cost survive the browser going away.
+    /// </summary>
+    [Fact]
+    public async Task ATurnIsRecordedWithItsEvidenceAndCost()
+    {
+        var f = await Build(x =>
+        {
+            x.Scripted.Script.Add(ScriptedModel.ToolUse("I'll look that up.", "lookup_order_status", new { orderNumber = "ORD-10042" }, input: 1842, output: 70));
+            x.Scripted.Script.Add(ScriptedModel.Text("In transit.", input: 2032, output: 222));
+        });
+        var id = NewId();
+        await f.Service.TurnAsync(id, "where is ORD-10042?", f.Emit, CancellationToken.None);
+        var rec = await Record(id);
+        Assert.Equal("completed", rec.outcome);
+        Assert.Null(rec.failure);
+        Assert.Equal("I'll look that up.\n\nIn transit.", rec.answer);
+        Assert.Equal((2, 3874L), (rec.calls, rec.input));
+        Assert.Contains("\"entryId\"", rec.retrieval);
+        Assert.Contains("\"lookup_order_status\"", rec.tools);
+        await using var calls = pg.Db.CreateCommand("SELECT count(*) FROM turn_model_call c JOIN conversation_turn t ON t.turn_id = c.turn_id WHERE t.conversation_id = $1");
+        calls.Parameters.Add(new Npgsql.NpgsqlParameter { Value = id });
+        Assert.Equal(2, Convert.ToInt32(await calls.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task AFailedTurnIsRecordedAsFailedWithWhatWasSpent()
+    {
+        var f = await Build(x => x.Model = new StreamingThenFailingModel());
+        var id = NewId();
+        await Assert.ThrowsAsync<ModelCallException>(() => f.Service.TurnAsync(id, "how long?", f.Emit, CancellationToken.None));
+        var rec = await Record(id);
+        Assert.Equal("failed", rec.outcome);
+        Assert.Contains("connection dropped", rec.failure);
+        Assert.Equal("Thirty ", rec.answer);
+        Assert.Equal(1842, rec.input);
+    }
+
+    /// <summary>
+    /// A client that goes away while the history read is in flight makes that read throw
+    /// cancellation. The record must say the customer left, not that the database broke.
+    /// </summary>
+    [Fact]
+    public async Task ACancelledTurnIsRecordedAsCancelledNotAsADatabaseFailure()
+    {
+        using var cts = new CancellationTokenSource();
+        var f = await Build(x => x.Model = new ScriptedModel { OnCall = _ => { cts.Cancel(); cts.Token.ThrowIfCancellationRequested(); return Task.CompletedTask; } });
+        var id = NewId();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Service.TurnAsync(id, "how long?", f.Emit, cts.Token));
+        var rec = await Record(id);
+        Assert.Equal("cancelled", rec.outcome);
+        Assert.Equal(1, f.Metrics.Turns.WithLabels("cancelled").Value);
+    }
+
+    [Fact]
+    public async Task ABudgetRefusalLeavesNoTurnRecord()
+    {
+        var f = await Build(x => x.Budget = new ConversationBudget(1, 100));
+        var id = NewId();
+        f.Budget.Record(id, 5);
+        await Assert.ThrowsAsync<BudgetExceededException>(() => f.Service.TurnAsync(id, "hi", f.Emit, CancellationToken.None));
+        await using var cmd = pg.Db.CreateCommand("SELECT count(*) FROM conversation_turn WHERE conversation_id = $1");
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter { Value = id });
+        Assert.Equal(0, Convert.ToInt32(await cmd.ExecuteScalarAsync()));
     }
 }

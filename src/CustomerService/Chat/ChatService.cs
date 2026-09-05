@@ -68,15 +68,16 @@ public sealed class ChatService : ITurner
     readonly IReadOnlyList<ToolDefinition> toolDefs;
     readonly ConversationBudget budget;
     readonly Metrics metrics;
+    readonly ITurnRecorder recorder;
     readonly int maxTokens;
     readonly ILogger logger;
     readonly ConversationLocks locks = new();
 
     public ChatService(ConversationMemory memory, Retriever retriever, IChatModel model, ConversationBudget budget,
-        Metrics metrics, int maxTokens, ILogger<ChatService>? logger, params IEnumerable<ITool> toolset)
+        Metrics metrics, ITurnRecorder recorder, int maxTokens, ILogger<ChatService>? logger, params IEnumerable<ITool> toolset)
     {
         this.memory = memory; this.retriever = retriever; this.model = model;
-        this.budget = budget; this.metrics = metrics; this.maxTokens = maxTokens;
+        this.budget = budget; this.metrics = metrics; this.recorder = recorder; this.maxTokens = maxTokens;
         this.logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ChatService>.Instance;
         tools = toolset.ToDictionary(t => t.Definition.Name);
         toolDefs = tools.Values.Select(t => t.Definition).ToList();
@@ -113,11 +114,22 @@ public sealed class ChatService : ITurner
         int modelCalls = 0;
         string reportedModel = model.Model;
         string outcome = "failed";
+        string? failure = null;
+        var startedAt = DateTimeOffset.UtcNow;
+        IReadOnlyList<PassageSummary> evidence = [];
+        var toolEvents = new List<ToolSummary>();
+        var callRecords = new List<ModelCallRecord>();
+        Guid? turnId = null;
 
         try
         {
             try { budget.Check(conversationId); }
             catch (BudgetExceededException) { outcome = "budget_exceeded"; throw; }
+
+            // The opening record, before the model is called. Its failure fails the turn: a
+            // model call this service cannot account for is worse than a turn that did not happen.
+            try { turnId = await recorder.OpenAsync(conversationId, message, startedAt, ct); }
+            catch (Npgsql.NpgsqlException ex) { outcome = "record_failed"; throw new MemoryException(ex); }
 
             try { await memory.AppendAsync(conversationId, Role.User, message, ct); }
             catch (Npgsql.NpgsqlException ex) { outcome = "memory_failed"; throw new MemoryException(ex); }
@@ -132,8 +144,8 @@ public sealed class ChatService : ITurner
                 throw new RetrievalException(ex);
             }
             metrics.Retrieval.Observe(retrievalStart.Elapsed.TotalSeconds);
-            await emit(new RetrievalEvent(passages.Select(p =>
-                new PassageSummary(p.Document.EntryId, p.Document.Language, p.Score, p.Document.Question)).ToList()));
+            evidence = passages.Select(p => new PassageSummary(p.Document.EntryId, p.Document.Language, p.Score, p.Document.Question)).ToList();
+            await emit(new RetrievalEvent(evidence));
 
             List<ModelMessage> history;
             try { history = await memory.HistoryAsync(conversationId, ct); }
@@ -199,10 +211,12 @@ public sealed class ChatService : ITurner
                 usage += result.Usage;
                 if (result.Model.Length > 0) reportedModel = result.Model;
                 RecordCall(reportedModel, result.Usage, callErr is not null);
+                callRecords.Add(new ModelCallRecord(modelCalls, reportedModel, result.Usage.InputTokens, result.Usage.OutputTokens, result.StopReason, callErr is not null));
 
                 if (callErr is not null)
                 {
                     outcome = callErr.Cancelled ? "cancelled" : "failed";
+                    failure = callErr.Cancelled ? "the model call was cancelled" : callErr.Message;
                     await RecordTurnSpendAsync(conversationId, reportedModel, usage, modelCalls, started, span, emit);
                     throw callErr;
                 }
@@ -219,7 +233,7 @@ public sealed class ChatService : ITurner
                     break;
                 }
 
-                var results = await RunToolsAsync(conversationId, result.ToolCalls, emit, ct);
+                var results = await RunToolsAsync(conversationId, result.ToolCalls, toolEvents, emit, ct);
                 messages = [.. messages,
                     new ModelMessage(Role.Assistant, result.Text, result.ToolCalls, Native: result.Native),
                     new ModelMessage(Role.User, ToolResults: results)];
@@ -227,9 +241,18 @@ public sealed class ChatService : ITurner
 
             await RecordTurnSpendAsync(conversationId, reportedModel, usage, modelCalls, started, span, emit);
         }
-        catch (OperationCanceledException) when (outcome == "failed")
+        catch (OperationCanceledException) when (outcome is "failed" or "memory_failed" or "retrieval_failed" or "record_failed")
         {
+            // A client that went away while a database read was in flight makes that read throw
+            // cancellation, and the turn would otherwise be recorded as the database breaking --
+            // the single question the record exists to answer correctly.
             outcome = "cancelled";
+            failure = "the request was cancelled";
+            throw;
+        }
+        catch (Exception ex) when (failure is null)
+        {
+            failure = ex.Message;
             throw;
         }
         finally
@@ -253,6 +276,22 @@ public sealed class ChatService : ITurner
             }
             metrics.Turns.WithLabels(outcome).Inc();
             metrics.TurnSeconds.WithLabels(reportedModel).Observe(started.Elapsed.TotalSeconds);
+
+            // The closing record, on the same detached token. By now the money is spent and the
+            // customer has their answer; a failure here is logged, not raised.
+            if (turnId is { } id)
+            {
+                using var persist = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var (usd, priced) = Prices.Usd(reportedModel, usage.InputTokens, usage.OutputTokens);
+                try
+                {
+                    await recorder.CloseAsync(id, new TurnClose(outcome, failure, reply.Length > 0 ? reply.ToString() : null,
+                        modelCalls > 0 ? reportedModel : null, callRecords, usage.InputTokens, usage.OutputTokens,
+                        priced && modelCalls > 0 ? Math.Round(usd, 8) : null, Tracing.TraceId(span) is { Length: > 0 } t ? t : null,
+                        evidence, toolEvents), DateTimeOffset.UtcNow, persist.Token);
+                }
+                catch (Exception ex) { logger.LogError(ex, "could not close the turn record {TurnId}", id); }
+            }
         }
     }
 
@@ -284,13 +323,18 @@ public sealed class ChatService : ITurner
     /// API and quietly teaches the model to stop asking for tools in parallel.
     /// </summary>
     async Task<IReadOnlyList<ToolResult>> RunToolsAsync(string conversationId, IReadOnlyList<ToolCall> calls,
-        Func<TurnEvent, ValueTask> emit, CancellationToken ct)
+        List<ToolSummary> toolEvents, Func<TurnEvent, ValueTask> emit, CancellationToken ct)
     {
         var emitGate = new SemaphoreSlim(1, 1);
         async ValueTask Emit(TurnEvent e)
         {
             await emitGate.WaitAsync(ct);
-            try { await emit(e); } finally { emitGate.Release(); }
+            try
+            {
+                if (e is ToolEvent te) toolEvents.Add(te.Tool);
+                await emit(e);
+            }
+            finally { emitGate.Release(); }
         }
 
         var tasks = calls.Select(async call =>

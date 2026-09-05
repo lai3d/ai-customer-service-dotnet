@@ -30,10 +30,15 @@ public static class ChatEndpoints
     /// <summary>Carries the id of the conversation a response belongs to, so a client that omitted one knows what to send next.</summary>
     public const string ConversationIdHeader = "X-Conversation-Id";
 
+    // Enums by name, in camelCase. The same default that sent the model {"status":1} sent the
+    // operations UI {"state":1} for a ticket, and the UI's contract test caught it the same
+    // afternoon. A number where a reader expects a word is the bug that keeps arriving through
+    // different doors.
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     public static void MapChatEndpoints(this IEndpointRouteBuilder app, ITurner turner, ChatConfig cfg, ILogger logger)

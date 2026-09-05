@@ -14,3 +14,7 @@ obj/
 .vs/
 .idea/
 *.user
+
+# The admin UI's build outputs.
+admin-ui/node_modules/
+admin-ui/dist/
