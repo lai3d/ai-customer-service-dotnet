@@ -13,6 +13,19 @@ public sealed class VectorStore(NpgsqlDataSource db)
     /// instead is the obvious bug and it is not merely wasteful: duplicates crowd out
     /// distinct passages inside the top-k window, so the model sees one answer four times
     /// instead of four different ones.
+    ///
+    /// TRUNCATE, not DELETE, and that is a measurement. Every restart re-ingests, and a DELETE
+    /// leaves the old rows in the HNSW index as dead entries until VACUUM removes them. An HNSW
+    /// scan is approximate: it collects hnsw.ef_search candidates from the graph and only then
+    /// drops the ones whose heap tuples are dead, so once enough restarts have piled up the
+    /// candidates are mostly dead and ORDER BY ... LIMIT 8 returns fewer than eight live rows.
+    /// Reproduced in psql against pgvector 0.8.6 with autovacuum off: thirty delete-and-
+    /// reinsert transactions of the same 36 rows, then the index scan returns 0 rows, a
+    /// sequential scan 8, and after VACUUM the index scan 8 again. The test suite met it as a
+    /// turn whose retrieval evidence was "[]" about one run in four, because every test
+    /// re-ingests. TRUNCATE rebuilds the index empty; readers wait on its lock until the new
+    /// rows are committed, which is the right trade for a 36-document load at startup.
+    /// ReingestingThirtyTimesStillRetrievesEverything pins it, with autovacuum off.
     /// </summary>
     public async Task ReplaceAsync(IReadOnlyList<Document> docs, IReadOnlyList<float[]> vectors, CancellationToken ct)
     {
@@ -20,7 +33,7 @@ public sealed class VectorStore(NpgsqlDataSource db)
             throw new ArgumentException($"have {docs.Count} documents and {vectors.Count} vectors");
         await using var conn = await db.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-        await using (var del = new NpgsqlCommand("DELETE FROM faq_document", conn, tx))
+        await using (var del = new NpgsqlCommand("TRUNCATE faq_document", conn, tx))
             await del.ExecuteNonQueryAsync(ct);
         for (int i = 0; i < docs.Count; i++)
         {

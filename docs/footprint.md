@@ -24,47 +24,64 @@ would cut all three to a fraction and add a vendor, a key, and a network round t
 There is no native build stage: ONNX Runtime arrives through NuGet, so the Dockerfile has
 three stages where the Go one has four, and nothing has to be compiled against a C library.
 
-### Memory, and how it was measured
+### Memory, measured on kind
 
-`docker stats` after six live turns across three providers: **680–700 MiB**. That is one
-number from one tool, and it is not the number the Go and Java repositories report — theirs
-come from the cgroup's `memory.current`, `anon` and `peak` on a kind cluster, with the model
-file's page cache separated out. This one has not been through that harness, so the honest
-comparison is:
+From each container's own cgroup on a kind cluster, the way the Go and Java numbers were
+taken, by `k8s/kind/sweep.sh` and `k8s/kind/verify.sh`:
 
 | | .NET | Go | Java |
 | --- | --- | --- | --- |
-| `docker stats` after a few turns | **680–700 MiB** | not published this way | not published this way |
-| `anon` at rest, kind, cgroup v2 | not measured | 951 MiB | 1409–1527 MiB |
-| `memory.peak` | not measured | 1394–1655 MiB | 2874–2889 MiB |
+| `anon` at rest — the real requirement | **637 MiB** | 951 MiB | 1409–1527 MiB |
+| `file` at rest — page cache, reclaimable | 17–394 MiB | 124–379 MiB | 10–18 MiB |
+| `memory.current` at rest | **660–1046 MiB** | 1082–1337 MiB | 1437–1547 MiB |
+| `memory.peak` — what a limit must accommodate | **924–1292 MiB** | 1394–1655 MiB | 2874–2889 MiB |
+| OOMKilled at | 896Mi and below | 1152Mi and below | 2560Mi and below |
+| Deployed `requests` / `limits` | 1152Mi / 1536Mi | 1536Mi / 2Gi | 3Gi / 4Gi |
+| Image | 1.22 GB | 1.1 GB | 1.92 GB |
 
-A resting figure under 700 MiB with a 470 MB model mapped in is consistent with the model
-being read into managed or native memory once and the rest of the process being small, and
-that is exactly the kind of sentence a measurement is supposed to replace. When this
-implementation gets Kubernetes manifests, the Go harness's `anon`/`file`/`peak` sweep is the
-method to copy, and the numbers above are the ones to fill in.
+Three things are worth reading off that table rather than the ratios.
+
+**The process memory is the smallest of the three, and the reason is not known.** All three
+hold the same 470 MB fp32 model in the same ONNX Runtime library; the .NET process does it in
+637 MiB of anonymous memory, the Go one in 951, the Java one in over 1400. The Java gap has an
+explanation (DJL's buffers and the JVM's own heap). The Go–.NET gap of about 310 MiB does not,
+yet: both load the same file through the same C library, and where the difference lives —
+the binding's copy of the model bytes, arena settings, the runtime's own allocator — has not
+been measured. It is reported as a number, not as a story.
+
+**Page cache moves between replicas.** `file` was 394 MiB in one .NET replica and 123 MiB in
+the other, then 17–26 MiB in every single-replica sweep row, with `anon` identical
+throughout. The kernel charges the model file's pages to whichever cgroup faults them in
+first. A comparison that quoted `memory.current` for one replica would be off by a factor
+that has nothing to do with the runtime.
+
+**The peak is at boot, and it is 1.4× the resting `anon`.** The Go ratio is 1.24×, the Java
+one ~1.9×. Sizing against `anon` alone OOMKills at 896Mi — 260 MiB above `anon` — because
+the page cache churn of reading a 470 MB file cannot all be reclaimed in time during
+startup. The request has to cover the peak.
 
 ### Startup
 
 | | |
 | --- | --- |
 | Time to `/readyz` returning 200, in Compose | **~4 s** after the container starts |
+| Container start to `Ready`, on kind under a 2-CPU limit | **4 s**, quantised to the 2 s probe period; 6.9–7.5 s of CPU consumed to get there. Go: 4.4 s and 8.0 s of CPU |
 | Model session created | 748 ms |
 | Corpus embedded and written (36 documents) | 560 ms |
 
-Measured by polling every two seconds, so "~4 s" is an upper bound with a two-second grain;
-the Go implementation reports 4.4 s on kind under a CPU limit. Startup is dominated by
+Measured by polling every two seconds, so "~4 s" is an upper bound with a two-second grain.
+Inside the kind pod `Environment.ProcessorCount` reads 2 on an 18-CPU node, derived from the
+CPU limit, and the embedding bound is the ConfigMap's explicit 4 rather than that 2. Startup is dominated by
 ONNX Runtime opening the model, then by the JIT: a Release build with tiered compilation
 warms up over the first requests, and the first live turn's retrieval took 28 ms where the
 third's took 11.
 
 ### What is not measured
 
-No CPU limit has been applied, so nothing here says what happens to the thread pool when
-the embedder's native call is throttled. No load has been run, so nothing here says what a
-burst of a thousand arrivals does to OS threads — the question the Go benchmark answered for
+No load has been run, so nothing here says what a burst of a thousand arrivals does to
+thread-pool threads under a CPU limit — the question the Go benchmark answered for
 goroutines and the one that matters most for a runtime whose thread pool grows slowly on
-purpose. Both are listed in the README as not done.
+purpose. Listed in the README as not done.
 
 ---
 

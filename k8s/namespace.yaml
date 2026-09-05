@@ -1,0 +1,10 @@
+# A namespace of its own, not the Java implementation's `ai-customer-service` or the Go
+# one's `ai-customer-service-go`. All three stacks are expected to run on one machine and,
+# if anyone tries it, one cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-customer-service-dotnet
+  labels:
+    app.kubernetes.io/name: ai-customer-service-dotnet
+    app.kubernetes.io/part-of: ai-customer-service

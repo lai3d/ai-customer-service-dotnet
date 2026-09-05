@@ -89,10 +89,12 @@ public class DeploymentTests
     [Fact]
     public void TheAdminUiIsServedBehindAProxyWithAContentSecurityPolicy()
     {
-        var nginx = Read("admin-ui/nginx.conf");
-        Assert.Contains("proxy_pass http://app:8082/api/;", nginx);
+        var nginx = Read("admin-ui/templates/default.conf.template");
+        Assert.Contains("proxy_pass http://${ADMIN_API_UPSTREAM}/api/;", nginx);
+        Assert.Contains("ADMIN_API_UPSTREAM: app:8082", Read("docker-compose.yml"));
         Assert.Contains("try_files $uri /index.html;", nginx);
-        Assert.Matches(@"Content-Security-Policy ""default-src 'self'", nginx);
+        Assert.Contains("default-src 'self'", nginx);
+        Assert.Contains("add_header Content-Security-Policy $csp always;", nginx);
         Assert.Contains("\"8083:8083\"", Read("docker-compose.yml"));
         Assert.Contains("ADMIN_ENABLED", Read("docker-compose.yml"));
     }
@@ -109,5 +111,56 @@ public class DeploymentTests
             Assert.Contains($"'{action}'", ui);
             Assert.Contains($"\"{action}\"", server);
         }
+    }
+
+    // ---- Kubernetes ----------------------------------------------------------------------
+
+    /// <summary>
+    /// A tunable is described in two places, .env.example and the ConfigMap, and the two
+    /// cannot drift: every ConfigMap key is a documented variable, apart from the runtime's
+    /// own DOTNET_* knobs, which the service never reads.
+    /// </summary>
+    [Fact]
+    public void EveryConfigMapKeyIsADocumentedVariable()
+    {
+        var documented = Regex.Matches(Read(".env.example"), @"^([A-Z_]+)=", RegexOptions.Multiline).Select(m => m.Groups[1].Value).ToHashSet();
+        var configMap = Read("k8s/configmap.yaml");
+        var keys = Regex.Matches(configMap, @"^  ([A-Z][A-Za-z_]+): ", RegexOptions.Multiline).Select(m => m.Groups[1].Value).Where(k => !k.StartsWith("DOTNET_")).ToList();
+        Assert.True(keys.Count >= 12, "the ConfigMap should carry the tunables");
+        var undocumented = keys.Where(k => !documented.Contains(k)).ToList();
+        Assert.True(undocumented.Count == 0, "in the ConfigMap but not in .env.example: " + string.Join(", ", undocumented));
+    }
+
+    [Fact]
+    public void TheManifestsAgreeWithTheImagesOnPortsAndUsers()
+    {
+        var deployment = Read("k8s/deployment.yaml");
+        Assert.Contains("containerPort: 8082", deployment);
+        Assert.Contains("runAsUser: 1654", deployment);      // the aspnet image's app user
+        Assert.Contains("readOnlyRootFilesystem: true", deployment);
+        Assert.DoesNotContain("volumes:", deployment);        // the API pod needs none
+        var ui = Read("k8s/admin-ui.yaml");
+        Assert.Contains("containerPort: 8083", ui);
+        Assert.Contains("runAsUser: 101", ui);                // nginx-unprivileged's user
+        Assert.Contains("ADMIN_API_UPSTREAM", ui);
+        Assert.Contains("EXPOSE 8083", Read("admin-ui/Dockerfile"));
+        Assert.Contains("nginx-unprivileged", Read("admin-ui/Dockerfile"));
+        // The Secret template must not sit where `kubectl apply -f k8s/` would sweep it up.
+        Assert.False(File.Exists(Path.Combine(Repo.Root, "k8s", "secret.yaml")));
+        Assert.True(File.Exists(Path.Combine(Repo.Root, "k8s", "examples", "secret.yaml")));
+    }
+
+    /// <summary>The numbers in the manifest are the ones the sweep table in the same file records.</summary>
+    [Fact]
+    public void TheResourceNumbersMatchTheSweepTableBesideThem()
+    {
+        var deployment = Read("k8s/deployment.yaml");
+        var request = Regex.Match(deployment, @"requests:\s*\n\s*cpu: ""[^""]+""\s*\n(?:\s*#.*\n)*\s*memory: ""(\w+)""").Groups[1].Value;
+        var limit = Regex.Match(deployment, @"limits:\s*\n(?:\s*#.*\n)*\s*cpu: ""[^""]+""\s*\n(?:\s*#.*\n)*\s*memory: ""(\w+)""").Groups[1].Value;
+        Assert.Equal("1152Mi", request);
+        Assert.Equal("1536Mi", limit);
+        Assert.Contains($"#   {request}    started", deployment);
+        Assert.Contains($"#   {limit}    started", deployment);
+        Assert.Contains("#   896Mi     OOMKilled", deployment);
     }
 }

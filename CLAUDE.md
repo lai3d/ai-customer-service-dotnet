@@ -173,6 +173,22 @@ decisions and where they differ from the siblings'. Rules:
   builds elements; the session token is a bearer in `sessionStorage`. `admin-ui` has its own
   `npm test` and typecheck, run by the `admin-ui` CI job and `make ui-test`.
 
+## Kubernetes
+
+`k8s/` is applied *unmodified* by `k8s/kind/verify.sh`; that guarantee is what makes the
+manifests the ones that were verified. The Secret template lives in `k8s/examples/` so the
+directory apply cannot sweep it up. Rules:
+
+- **Every number in `deployment.yaml`'s `resources` came from `k8s/kind/sweep.sh`.** If you
+  change the image or the model, re-run the sweep and paste the table; do not edit a number.
+- **The API pod has no volumes and a read-only root.** `DOTNET_EnableDiagnostics: "0"` in the
+  ConfigMap is what makes that possible; the runtime otherwise wants a socket under `/tmp`.
+- **`EMBEDDING_MAX_CONCURRENCY` is explicit in the ConfigMap** because `ProcessorCount`
+  follows the cgroup CPU limit and the bound would otherwise move with `resources`.
+- **The harness never opens the user's kubeconfig**; it exports its own under `k8s/kind/`.
+- **Every ConfigMap key is a variable `.env.example` documents** (plus `DOTNET_*` runtime
+  knobs); `DeploymentTests` asserts it, so the two places a tunable is described cannot drift.
+
 ## Measurements, and how to change one
 
 `docs/` holds one document per decision and every number in it was produced by a test or a
