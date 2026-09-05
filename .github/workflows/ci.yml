@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The embedding model is 470 MB. Downloading it on every run would dominate the build.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: model-cache
+          key: model-${{ hashFiles('scripts/fetch-deps.sh') }}
+
+      - name: Fetch the embedding model
+        run: ./scripts/fetch-deps.sh
+
+      # A skipped test is not a passing test. The suite skips when the model is absent,
+      # which is right for a contributor who has not run `make deps` and wrong for CI.
+      - name: Assert the embedding model is present
+        run: test -f model-cache/multilingual-e5-small/model.onnx
+
+      - run: dotnet build -c Release -warnaserror
+
+      # No API key is configured for this job, deliberately. Everything up to the model
+      # call is testable, and Testcontainers supplies a real pgvector for the retrieval
+      # measurements.
+      - name: Test
+        run: dotnet test -c Release

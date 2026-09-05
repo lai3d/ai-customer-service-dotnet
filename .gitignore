@@ -1,0 +1,16 @@
+# The embedding model scripts/fetch-deps.sh downloads. 470 MB, reproducible.
+/model-cache/
+
+# Build output.
+bin/
+obj/
+/publish/
+*.swp
+
+# Real credentials. .env.example is the committed one.
+.env
+
+# IDE
+.vs/
+.idea/
+*.user

@@ -1,0 +1,75 @@
+# Ports and the project name deliberately avoid the sibling Java and Go implementations':
+# all three stacks run on one machine, and Compose container names are global rather than
+# scoped to a project.
+name: ai-customer-service-dotnet
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: csagent-dotnet-postgres
+    environment:
+      # The same variables the app service reads, so a documented value in .env cannot
+      # initialise the database with one set of credentials and point the app at another.
+      POSTGRES_DB: ${POSTGRES_DB:-csagent}
+      POSTGRES_USER: ${POSTGRES_USER:-csagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-csagent}
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-csagent} -d $${POSTGRES_DB:-csagent}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Jaeger ingests OTLP directly, so no separate collector is needed locally. A real
+  # deployment would put an OpenTelemetry Collector in front.
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    container_name: csagent-dotnet-jaeger
+    ports:
+      - "16688:16686"   # UI
+      - "4320:4318"     # OTLP/HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  app:
+    build:
+      context: .
+    container_name: csagent-dotnet-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    environment:
+      # Anything documented in .env.example has to be listed here or Compose silently does
+      # not pass it into the container -- an undeclared variable is not injected, and the
+      # symptom is a default quietly taking effect. A test asserts the two files agree.
+      HTTP_ADDR: ":8082"
+      CHAT_PROVIDER: ${CHAT_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_CHAT_MODEL: ${ANTHROPIC_CHAT_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      XAI_CHAT_MODEL: ${XAI_CHAT_MODEL:-}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-csagent}
+      POSTGRES_USER: ${POSTGRES_USER:-csagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-csagent}
+      CONVERSATION_TOKEN_BUDGET: ${CONVERSATION_TOKEN_BUDGET:-200000}
+      EMBEDDING_MAX_CONCURRENCY: ${EMBEDDING_MAX_CONCURRENCY:-0}
+      # On here, because this is the stack that brings Jaeger up alongside the app.
+      OTLP_TRACING_EXPORT_ENABLED: "true"
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318
+      TRACING_SAMPLE_RATE: ${TRACING_SAMPLE_RATE:-1.0}
+      TRACE_INCLUDE_QUERY_CONTENT: ${TRACE_INCLUDE_QUERY_CONTENT:-false}
+    # Must stay above the application's own SHUTDOWN_GRACE (30s), or the container is
+    # killed part-way through the grace period it was given.
+    stop_grace_period: 45s
+
+volumes:
+  pgdata:
