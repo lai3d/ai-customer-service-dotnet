@@ -67,6 +67,7 @@ services:
       OTLP_TRACING_ENDPOINT: http://jaeger:4318
       TRACING_SAMPLE_RATE: ${TRACING_SAMPLE_RATE:-1.0}
       TRACE_INCLUDE_QUERY_CONTENT: ${TRACE_INCLUDE_QUERY_CONTENT:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-Information}
     # Must stay above the application's own SHUTDOWN_GRACE (30s), or the container is
     # killed part-way through the grace period it was given.
     stop_grace_period: 45s

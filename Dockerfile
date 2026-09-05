@@ -34,7 +34,8 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
 
 # ---- 3. runtime -------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
-RUN useradd --system --uid 10001 --create-home app
+# The base image already ships an unprivileged `app` user (uid 1654); adding another with
+# useradd fails with "name already in use", which is how this was found.
 WORKDIR /app
 COPY --from=build /out/ /app/
 COPY --from=model /model/model.onnx     /app/model-cache/multilingual-e5-small/model.onnx
@@ -47,7 +48,7 @@ ENV EMBEDDING_MODEL_PATH=/app/model-cache/multilingual-e5-small/model.onnx \
     HTTP_ADDR=:8082 \
     DOTNET_gcServer=0
 
-USER 10001
+USER app
 EXPOSE 8082
 
 # Measured after the first build; see docs/footprint.md for where it goes.

@@ -26,10 +26,17 @@ public interface ITool
 
 public static class ToolJson
 {
+    // Enums as their names. The first live turn against Claude reported that "the status
+    // field came back in a coded form I can't reliably translate": System.Text.Json writes
+    // enums as integers unless told otherwise, so the model received {"status":1} and,
+    // correctly, refused to guess what it meant. No test noticed, because every test read
+    // the JSON back through the same serializer. A tool result is prompt; it has to be
+    // written for a reader that has never seen the type.
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new JsonStringEnumConverter() },
     };
 
     public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Options);

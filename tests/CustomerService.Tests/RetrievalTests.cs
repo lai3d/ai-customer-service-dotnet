@@ -173,3 +173,61 @@ public class RetrievalTests(Postgres384 pg, RetrievalTests.SharedEmbedder shared
             Assert.Equal(baseline, results[i]);
     }
 }
+
+/// <summary>
+/// Not an assertion: the numbers docs/retrieval.md quotes, produced by the suite so they can be
+/// re-measured rather than edited. Run with output enabled to read them.
+/// </summary>
+[Collection("postgres-384")]
+public class RetrievalMeasurements(Postgres384 pg)
+{
+    [Fact]
+    public async Task RecordTheNumbersTheDocumentsQuote()
+    {
+        Assert.SkipUnless(Repo.ModelPresent, "embedding model not present; run scripts/fetch-deps.sh");
+        var output = TestContext.Current.TestOutputHelper!;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var embedder = new OnnxEmbedder(new OnnxOptions(Repo.ModelPath, Repo.TokenizerPath, 384, "query: ", "passage: "));
+        output.WriteLine($"session start: {sw.ElapsedMilliseconds} ms");
+
+        await embedder.EmbedQueryAsync("warm up", CancellationToken.None);
+        var store = new VectorStore(pg.Db);
+        sw.Restart();
+        await Ingest.RunAsync(Repo.CorpusPath, embedder, store, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, CancellationToken.None);
+        output.WriteLine($"ingest (embed + write 36 docs): {sw.ElapsedMilliseconds} ms");
+
+        var times = new List<double>();
+        for (int i = 0; i < 20; i++)
+        {
+            sw.Restart();
+            await embedder.EmbedQueryAsync("my parcel showed up broken", CancellationToken.None);
+            times.Add(sw.Elapsed.TotalMilliseconds);
+        }
+        times.Sort();
+        output.WriteLine($"one query embedded: median {times[10]:F1} ms, min {times[0]:F1} ms, max {times[^1]:F1} ms");
+
+        var r = new Retriever(embedder, store, 8, 0);
+        sw.Restart();
+        for (int i = 0; i < 20; i++) await r.RetrieveAsync("my parcel showed up broken", CancellationToken.None);
+        output.WriteLine($"retrieve (embed + search): {sw.Elapsed.TotalMilliseconds / 20:F1} ms average");
+
+        output.WriteLine("relevant (query -> top hit, score):");
+        foreach (var (q, _) in new[] { ("my parcel showed up broken", ""), ("I was billed twice", ""), ("运费多少钱", ""), ("想换个大一号的", "") })
+        {
+            var top = (await r.RetrieveAsync(q, CancellationToken.None))[0];
+            output.WriteLine($"  {q} -> {top.Document.EntryId} ({top.Document.Language}) {top.Score:F4}");
+        }
+        output.WriteLine("off-topic and degenerate (query -> top score):");
+        foreach (var q in new[] { "你们招聘工程师吗", "recommend me a good movie", "。。。", "...", "a", "asdfghjkl" })
+        {
+            var top = (await r.RetrieveAsync(q, CancellationToken.None))[0];
+            output.WriteLine($"  {q} -> {top.Document.EntryId} {top.Score:F4}");
+        }
+        output.WriteLine("cross-lingual, English only:");
+        foreach (var q in new[] { "运费多少钱", "包裹到的时候是坏的" })
+        {
+            var top = (await r.RetrieveInAsync(q, "en", CancellationToken.None))[0];
+            output.WriteLine($"  {q} -> {top.Document.EntryId} {top.Score:F4}");
+        }
+    }
+}

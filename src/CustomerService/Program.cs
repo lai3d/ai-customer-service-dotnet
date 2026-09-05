@@ -35,6 +35,12 @@ catch (ConfigException ex)
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; o.UseUtcTimestamp = true; });
+// Per-request lines from the framework are noise next to what the turn logs; failures still
+// come through at Warning and above.
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.Hosting", LogLevel.Information);
+if (Enum.TryParse<LogLevel>(Environment.GetEnvironmentVariable("LOG_LEVEL"), true, out var level))
+    builder.Logging.SetMinimumLevel(level);
 
 var (address, port) = ParseAddr(cfg.HttpAddr);
 builder.WebHost.ConfigureKestrel(k =>

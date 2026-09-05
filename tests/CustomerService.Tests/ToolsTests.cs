@@ -14,6 +14,9 @@ public class ToolsTests
         Assert.Equal("found", r.Outcome);
         Assert.Contains("\"found\":true", r.Content);
         Assert.Contains("SP884213906SG", r.Content);
+        // The model reads this. A status of 1 is a code it cannot translate; a status of
+        // IN_TRANSIT is an answer. Found live, on the first turn.
+        Assert.Contains("\"status\":\"IN_TRANSIT\"", r.Content);
     }
 
     [Fact]

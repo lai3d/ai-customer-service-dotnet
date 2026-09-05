@@ -146,49 +146,53 @@ public sealed class ChatService : ITurner
                 var request = new ModelRequest(SystemPrompt, messages, toolDefs, maxTokens);
 
                 // One span per model call, because a turn is not a model call. A trace that
-                // shows one span for a tool-calling turn hides half of what it cost.
-                using var callSpan = Tracing.Source.StartActivity("chat " + model.Model);
-                callSpan?.SetTag(Tracing.AttrGenAISystem, model.Provider);
-                callSpan?.SetTag(Tracing.AttrGenAIRequestModel, model.Model);
-                callSpan?.SetTag("chat.tool_round", round);
-
-                // A tool-calling turn is two model calls, and the second one's text is a new
-                // message rather than a continuation of the first. Appended raw the two run
-                // together -- "...and any tracking details.Here's what I found" -- which
-                // reads as a typo rather than as the seam it is. It only shows up when the
-                // model says something before asking for the tool.
-                bool roundHasText = false;
+                // shows one span for a tool-calling turn hides half of what it cost. The span
+                // ends before the tools run, so tool spans are siblings under the turn rather
+                // than children of the call that asked for them.
                 ModelResult result;
                 ModelCallException? callErr = null;
-                try
+                using (var callSpan = Tracing.Source.StartActivity("chat " + model.Model))
                 {
-                    result = await model.StreamAsync(request, async text =>
-                    {
-                        if (!roundHasText)
-                        {
-                            roundHasText = true;
-                            if (reply.Length > 0)
-                            {
-                                reply.Append(ParagraphBreak);
-                                await emit(new MessageEvent(ParagraphBreak));
-                            }
-                        }
-                        reply.Append(text);
-                        await emit(new MessageEvent(text));
-                    }, ct);
-                }
-                catch (ModelCallException ex)
-                {
-                    callErr = ex;
-                    result = ex.Partial;
-                }
-                modelCalls++;
+                    callSpan?.SetTag(Tracing.AttrGenAISystem, model.Provider);
+                    callSpan?.SetTag(Tracing.AttrGenAIRequestModel, model.Model);
+                    callSpan?.SetTag("chat.tool_round", round);
 
-                callSpan?.SetTag(Tracing.AttrGenAIResponseModel, result.Model);
-                callSpan?.SetTag(Tracing.AttrGenAIInputTokens, result.Usage.InputTokens);
-                callSpan?.SetTag(Tracing.AttrGenAIOutputTokens, result.Usage.OutputTokens);
-                callSpan?.SetTag(Tracing.AttrGenAIFinishReason, result.StopReason);
-                if (callErr is not null) callSpan?.SetStatus(ActivityStatusCode.Error, "model call failed");
+                    // A tool-calling turn is two model calls, and the second one's text is a new
+                    // message rather than a continuation of the first. Appended raw the two run
+                    // together -- "...and any tracking details.Here's what I found" -- which
+                    // reads as a typo rather than as the seam it is. It only shows up when the
+                    // model says something before asking for the tool.
+                    bool roundHasText = false;
+                    try
+                    {
+                        result = await model.StreamAsync(request, async text =>
+                        {
+                            if (!roundHasText)
+                            {
+                                roundHasText = true;
+                                if (reply.Length > 0)
+                                {
+                                    reply.Append(ParagraphBreak);
+                                    await emit(new MessageEvent(ParagraphBreak));
+                                }
+                            }
+                            reply.Append(text);
+                            await emit(new MessageEvent(text));
+                        }, ct);
+                    }
+                    catch (ModelCallException ex)
+                    {
+                        callErr = ex;
+                        result = ex.Partial;
+                    }
+                    modelCalls++;
+
+                    callSpan?.SetTag(Tracing.AttrGenAIResponseModel, result.Model);
+                    callSpan?.SetTag(Tracing.AttrGenAIInputTokens, result.Usage.InputTokens);
+                    callSpan?.SetTag(Tracing.AttrGenAIOutputTokens, result.Usage.OutputTokens);
+                    callSpan?.SetTag(Tracing.AttrGenAIFinishReason, result.StopReason);
+                    if (callErr is not null) callSpan?.SetStatus(ActivityStatusCode.Error, "model call failed");
+                }
 
                 // Usage is recorded even when the call failed part-way: tokens spent on a
                 // failed call are still tokens spent.
@@ -254,6 +258,10 @@ public sealed class ChatService : ITurner
 
     void RecordCall(string reportedModel, Usage callUsage, bool failed)
     {
+        // One line per model call, so the wire's behaviour is a record rather than a belief:
+        // a tool-calling turn shows two of these, each with its own usage.
+        logger.LogDebug("model call finished: model {Model} in={InputTokens} out={OutputTokens} failed={Failed}",
+            reportedModel, callUsage.InputTokens, callUsage.OutputTokens, failed);
         metrics.ModelCalls.WithLabels(reportedModel, failed ? "error" : "success").Inc();
         var (usd, priced) = Prices.Usd(reportedModel, callUsage.InputTokens, callUsage.OutputTokens);
         metrics.RecordUsage(reportedModel, callUsage.InputTokens, callUsage.OutputTokens, usd, priced);
@@ -265,7 +273,7 @@ public sealed class ChatService : ITurner
         budget.Record(conversationId, usage.Total);
         var (usd, _) = Prices.Usd(reportedModel, usage.InputTokens, usage.OutputTokens);
         await emit(new UsageEvent(new UsageSummary(reportedModel, modelCalls, usage.InputTokens, usage.OutputTokens,
-            usd, started.ElapsedMilliseconds,
+            Math.Round(usd, 8), started.ElapsedMilliseconds,
             // So a turn in the UI can be opened in the tracing backend. Null when nothing is traced.
             Tracing.TraceId(span) is { Length: > 0 } id ? id : null)));
     }

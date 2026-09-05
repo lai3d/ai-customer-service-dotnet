@@ -20,7 +20,6 @@ public sealed class Metrics
     public Counter ToolCalls { get; }
     public Counter Unpriced { get; }
     public Histogram Retrieval { get; }
-    public Histogram Embedding { get; }
 
     public Metrics() : this(Prometheus.Metrics.NewCustomRegistry()) { }
 
@@ -48,8 +47,6 @@ public sealed class Metrics
             new CounterConfiguration { LabelNames = ["model"] });
         Retrieval = f.CreateHistogram("chat_retrieval_duration_seconds", "Query embedding plus vector search.",
             new HistogramConfiguration { Buckets = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 1] });
-        Embedding = f.CreateHistogram("chat_embedding_duration_seconds", "One in-process embedding forward pass.",
-            new HistogramConfiguration { Buckets = [0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1] });
     }
 
     /// <summary>Meters one model call. The model is the one the provider reported.</summary>
