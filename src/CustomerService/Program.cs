@@ -155,8 +155,12 @@ app.MapGet("/readyz", async (CancellationToken ct) =>
     }
 });
 
+// ProcessorCount is what the embedding concurrency bound defaults to, and .NET derives it
+// from the cgroup CPU limit: logged so a pod says what it thinks it has.
 app.Lifetime.ApplicationStarted.Register(() =>
-    log.LogInformation("listening on {Addr}, provider {Provider}, model {Model}", cfg.HttpAddr, model.Provider, model.Model));
+    log.LogInformation("listening on {Addr}, provider {Provider}, model {Model}, processors {Processors}, embedding concurrency {EmbeddingConcurrency}",
+        cfg.HttpAddr, model.Provider, model.Model, Environment.ProcessorCount,
+        cfg.Rag.MaxConcurrentEmbeddings <= 0 ? Environment.ProcessorCount : cfg.Rag.MaxConcurrentEmbeddings));
 app.Lifetime.ApplicationStopping.Register(() =>
     log.LogInformation("shutting down with a grace period of {Grace}", cfg.ShutdownTimeout));
 

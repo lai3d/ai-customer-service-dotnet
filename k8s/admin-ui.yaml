@@ -1,0 +1,109 @@
+# The operations UI: a static bundle on nginx, deployed separately from the API. It holds
+# no secret and reaches no database -- it proxies /api to the API's Service, so the browser
+# sees one origin and the API needs no CORS, and everything it displays arrives in the
+# operator's own browser under the operator's own session.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-customer-service-dotnet-admin-ui
+  namespace: ai-customer-service-dotnet
+  labels:
+    app.kubernetes.io/name: ai-customer-service-dotnet
+    app.kubernetes.io/component: admin-ui
+data:
+  # The API Service, as nginx inside the cluster reaches it. Rendered into the nginx config
+  # at container start by the image's envsubst step.
+  ADMIN_API_UPSTREAM: "ai-customer-service-dotnet.ai-customer-service-dotnet.svc.cluster.local:8082"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-customer-service-dotnet-admin-ui
+  namespace: ai-customer-service-dotnet
+  labels:
+    app.kubernetes.io/name: ai-customer-service-dotnet
+    app.kubernetes.io/component: admin-ui
+spec:
+  # ClusterIP for the same reason as the API: what sits in front is the edge owner's call,
+  # and here it decides who can reach the sign-in page.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ai-customer-service-dotnet
+    app.kubernetes.io/component: admin-ui
+  ports:
+    - name: http
+      port: 8083
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-customer-service-dotnet-admin-ui
+  namespace: ai-customer-service-dotnet
+  labels:
+    app.kubernetes.io/name: ai-customer-service-dotnet
+    app.kubernetes.io/component: admin-ui
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ai-customer-service-dotnet
+      app.kubernetes.io/component: admin-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ai-customer-service-dotnet
+        app.kubernetes.io/component: admin-ui
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # nginx-unprivileged's own user.
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: ghcr.io/lai3d/ai-customer-service-dotnet-admin-ui:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: ai-customer-service-dotnet-admin-ui
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "24Mi"
+            limits:
+              memory: "64Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Unlike the API pod, this one needs writable paths: envsubst renders the config
+          # into /etc/nginx/conf.d at start, and nginx keeps its pid and caches under /tmp.
+          # Both are emptyDir; the root filesystem stays read-only.
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: conf
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

@@ -61,6 +61,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-csagent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-csagent}
       CONVERSATION_TOKEN_BUDGET: ${CONVERSATION_TOKEN_BUDGET:-200000}
+      SHUTDOWN_GRACE: ${SHUTDOWN_GRACE:-30s}
       EMBEDDING_MAX_CONCURRENCY: ${EMBEDDING_MAX_CONCURRENCY:-0}
       # On here, because this is the stack that brings Jaeger up alongside the app.
       OTLP_TRACING_EXPORT_ENABLED: "true"
@@ -89,6 +90,8 @@ services:
       - app
     ports:
       - "8083:8083"
+    environment:
+      ADMIN_API_UPSTREAM: app:8082
 
 volumes:
   pgdata:

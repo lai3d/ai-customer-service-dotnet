@@ -30,6 +30,7 @@ Anthropic Claude，可通过配置切换到 OpenAI 或 xAI。
 | .NET 上的进程内嵌入不需要原生构建步骤——ONNX Runtime 随 NuGet 包到位——代价换成了要自己写分词器 | [检索](docs/retrieval.md) |
 | 三个得分分布在这里的重叠与 Go 完全一致，所以阈值同样因测量而设为 0 | [检索](docs/retrieval.md#no-similarity-threshold-is-worth-setting-with-this-model) |
 | 枚举写成整数的 bug 第三次出现，这次经由管理 API；一个像分离前端那样读 JSON 文本的测试在打开浏览器之前就抓住了它 | [运营界面](docs/operations-admin.md#the-bug-that-arrived-through-a-third-door) |
+| 在 kind 上，.NET 进程用 637 MiB 匿名内存装下同一个 470 MB 模型，Go 是 951，Java 超过 1400；Java 那一段差距有解释，Go 与 .NET 之间的那一段还没有人解释 | [体积](docs/footprint.md#memory-measured-on-kind) |
 | 认领和释放按钮什么也不做：React 处理函数读回了自己刚设的状态。五个先弹表单的操作都正常，两个直接点击的恰恰失败，只有真实浏览器看得见 | [运营界面](docs/operations-admin.md#verified-in-a-browser-and-what-it-found) |
 
 ---
@@ -221,7 +222,8 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 | [对话提供商](docs/providers.md) | Anthropic、OpenAI 与 xAI，以及只有真实调用才能发现的事 |
 | [工具调用](docs/tools.md) | 为什么找不到的订单是一个值、为什么会话身份是参数、为什么工具结果也是提示词 |
 | [可观测性](docs/observability.md) | OTLP 上的 GenAI span、错位的工具 span，以及在后端 grep 客户文本 |
-| [体积](docs/footprint.md) | 镜像和进程的开销，以及哪些数字尚不可比 |
+| [体积](docs/footprint.md) | 镜像和进程的开销，在 kind 上与 Go、Java 的数字并排测量 |
+| [Kubernetes](k8s/README.md) | 清单由校验脚本在 kind 上原样 apply 并断言二十五件事，以及为它定尺寸的内存扫描 |
 | [演示页面](docs/demo-ui.md) | Go 实现的「玻璃盒」，刻意共用 |
 | [运营界面](docs/operations-admin.md) | 员工登录、工单闭环、轮次记录、回答反馈与审计，前端独立部署 |
 
@@ -239,7 +241,7 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 
 **尚未完成的事，直说而不是暗示：**
 
-- **没有 Kubernetes 清单。** 两个兄弟仓库都有并在 kind 上验证过；这里还没有，[体积](docs/footprint.md)里的内存数字也相应标注。
+- **Kubernetes 清单在 kind 上验证过，没上过真实集群。** 一次性集群上二十五项断言；没有生产集群见过它们，而且大多数断言还没被看到变红——[k8s/README.md](k8s/README.md#which-assertions-have-been-seen-to-fail) 维护着这份清单。
 - **没有基准测试。** Go 实现测过 goroutine 对 Loom；这里对应的问题——一波阻塞的原生调用会对 .NET
   线程池做什么——是这个运行时最值得问的，而它还没被测量。嵌入器的限流依据是推理，不是数字。
 - **演示页面来自 Go 实现，这里尚未在浏览器中驱动过。** 它消费的线路契约已经验证。
@@ -260,6 +262,7 @@ reply      你的订单 ORD-10042（1 件降噪耳机）目前状态是**运输�
 
 ```
 ├── Dockerfile                 # 3 个阶段；模型烘进镜像，运行时不下载
+├── k8s/                       # 清单 + 在 kind 上验证它们的脚本，以及内存扫描
 ├── docker-compose.yml         # Postgres、Jaeger、应用、管理前端 -- 端口避开兄弟仓库
 ├── admin-ui/                  # 运营前端：Vite + React + TypeScript，独立镜像，8083 端口
 ├── corpus/faq.json            # 与 Java、Go 实现逐字节一致

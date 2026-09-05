@@ -36,6 +36,7 @@ found a defect here, that is recorded too.
 | In-process embedding needs no native build step on .NET — ONNX Runtime ships in a NuGet package — and costs a tokenizer instead | [Retrieval](docs/retrieval.md) |
 | The three score populations overlap here exactly as they did in Go, so the threshold is 0 for the same measured reason | [Retrieval](docs/retrieval.md#no-similarity-threshold-is-worth-setting-with-this-model) |
 | The enum-as-integer bug arrived a third time, through the admin API this time, and a test that reads JSON the way the separated UI does caught it before a browser was opened | [The operations surface](docs/operations-admin.md#the-bug-that-arrived-through-a-third-door) |
+| On kind, the .NET process holds the same 470 MB model in 637 MiB of anonymous memory where Go holds it in 951 and Java in over 1400; the two-thirds of that gap the Java side explains, the Go–.NET third nobody has yet | [Footprint](docs/footprint.md#memory-measured-on-kind) |
 | Claim and release did nothing: a React handler read state it had just set. The five actions that open a form worked; the two that act on a bare click were exactly the two that failed, and only a real browser showed it | [The operations surface](docs/operations-admin.md#verified-in-a-browser-and-what-it-found) |
 
 ---
@@ -237,7 +238,8 @@ Two model calls, because the model asked for the tool and then answered with its
 | [Chat providers](docs/providers.md) | Anthropic, OpenAI and xAI, and what only a live call found |
 | [Tool calling](docs/tools.md) | Why a missing order is a value, why conversation identity is a parameter, and why a tool result is prompt |
 | [Observability](docs/observability.md) | GenAI spans over OTLP, the misplaced tool span, and grepping the backend for customer text |
-| [Footprint](docs/footprint.md) | What the image and the process cost, and which numbers are not yet comparable |
+| [Footprint](docs/footprint.md) | What the image and the process cost, measured on kind beside the Go and Java numbers |
+| [Kubernetes](k8s/README.md) | Manifests applied unmodified on kind by a harness that asserts twenty-five things, and the memory sweep that sized them |
 | [The demo UI](docs/demo-ui.md) | The Go implementation's glass box, shared on purpose |
 | [The operations surface](docs/operations-admin.md) | Staff login, the ticket loop, turn records, answer feedback and audit, with the frontend deployed separately |
 
@@ -262,8 +264,10 @@ a full ticket cycle; the one defect it found is recorded.
 
 **What is not done, stated rather than implied:**
 
-- **No Kubernetes manifests.** Both siblings ship them, verified on kind; this one does not
-  yet, and the memory numbers in [Footprint](docs/footprint.md) are labelled accordingly.
+- **The Kubernetes manifests are verified on kind, not on a real cluster.** Twenty-five
+  assertions on a throwaway cluster; no production cluster has seen them, and most of the
+  assertions have not yet been seen red — [k8s/README.md](k8s/README.md#which-assertions-have-been-seen-to-fail)
+  keeps the inventory.
 - **No benchmark.** The Go implementation measured goroutines against Loom; the equivalent
   question here — what a burst of blocked native calls does to the .NET thread pool — is
   the most interesting one this runtime raises, and it is unmeasured. The embedder is
@@ -293,6 +297,7 @@ exists, because the operations surface shows customer conversations.
 
 ```
 ├── Dockerfile                 # 3 stages; the model baked in, no runtime downloads
+├── k8s/                       # manifests + a kind harness that verifies them, and the memory sweep
 ├── docker-compose.yml         # Postgres, Jaeger, the app, the admin UI -- ports avoid the siblings'
 ├── admin-ui/                  # the operations UI: Vite + React + TypeScript, its own image on 8083
 ├── corpus/faq.json            # byte-identical to the Java and Go implementations'

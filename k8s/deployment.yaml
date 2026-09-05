@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-customer-service-dotnet
+  namespace: ai-customer-service-dotnet
+  labels:
+    app.kubernetes.io/name: ai-customer-service-dotnet
+    app.kubernetes.io/component: app
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ai-customer-service-dotnet
+      app.kubernetes.io/component: app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ai-customer-service-dotnet
+        app.kubernetes.io/component: app
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8082"
+    spec:
+      # Longer than SHUTDOWN_GRACE (30s) in the ConfigMap, so a draining pod finishes its
+      # in-flight streamed answers before SIGKILL.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        # The aspnet base image's own unprivileged user. Asserting it here means the pod is
+        # rejected if someone rebuilds the image as root.
+        runAsUser: 1654
+        runAsGroup: 1654
+        fsGroup: 1654
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          # Replace with your registry path and an immutable tag or digest. `:latest` plus
+          # imagePullPolicy: Always is how you end up unable to say what is running.
+          image: ghcr.io/lai3d/ai-customer-service-dotnet:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: ai-customer-service-dotnet-config
+            - secretRef:
+                name: ai-customer-service-dotnet-secrets
+          resources:
+            # Measured on a kind cluster by k8s/kind/sweep.sh, not reasoned about:
+            #
+            #   limit     outcome      cgroup peak   anon      process RSS   % of limit
+            #   640Mi     OOMKilled    --            --        --            --
+            #   768Mi     OOMKilled    --            --        --            --
+            #   896Mi     OOMKilled    --            --        --            --
+            #   1Gi       started      932 MiB       637 MiB   742 MiB       91%
+            #   1152Mi    started      924 MiB       637 MiB   742 MiB       80%
+            #   1280Mi    started      924 MiB       635 MiB   742 MiB       72%
+            #   1536Mi    started      925 MiB       637 MiB   742 MiB       60%
+            #   2Gi       started      933 MiB       635 MiB   741 MiB       46%
+            #
+            # The peak plateaus at ~930 MiB from 1Gi upwards, so that is the real requirement
+            # and everything above it is headroom. 1Gi "works" at 91% of the limit, which is
+            # not a margin, it is a coincidence waiting to end. `anon` -- the process itself,
+            # overwhelmingly the 470 MB model in ONNX Runtime's memory -- is 637 MiB in every
+            # row; the rest of the peak is page cache from reading the model out of the image
+            # layer, reclaimable, and charged to whichever replica faults it in first.
+            requests:
+              cpu: "500m"
+              # Covers the *startup peak*, not the steady state, because the peak is during
+              # boot: a node packed to requests does not degrade this pod, it crash-loops it.
+              memory: "1152Mi"
+            limits:
+              # A CPU limit is set deliberately. .NET derives Environment.ProcessorCount from
+              # it, and the thread pool's minimum thread count and the GC's heap count follow;
+              # EMBEDDING_MAX_CONCURRENCY is set explicitly in the ConfigMap so that coupling
+              # cannot bite silently, but the limit is here so the count is a number someone
+              # chose.
+              cpu: "2"
+              # The worst observed peak sits at 60% of this.
+              memory: "1536Mi"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # /readyz opens a database connection, so a pod that loses Postgres drops out of
+          # the Service instead of serving 500s.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # No volumes. ONNX Runtime's native library arrives in the publish output and is
+          # loaded by path, the tokenizer is C#, the model is read from the image layer, and
+          # with DOTNET_EnableDiagnostics=0 the runtime writes nothing to disk either. The
+          # Java implementation needs a writable, exec-capable /tmp for the same runtime,
+          # because DJL unpacks it out of a jar; this one does not, and verify.sh checks it.
