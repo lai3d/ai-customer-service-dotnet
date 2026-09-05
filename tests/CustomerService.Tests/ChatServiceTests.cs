@@ -339,6 +339,35 @@ public class ChatServiceTests(Postgres8 pg)
         Assert.Equal(3, await f.Memory.CountAsync(id, CancellationToken.None));
     }
 
+    /// <summary>
+    /// A DELETE-and-reinsert reload leaves the old rows in the HNSW index as dead entries, and
+    /// an approximate index scan drops dead candidates only after collecting them: after enough
+    /// reloads, ORDER BY ... LIMIT 8 came back empty while the table held 36 live rows. The
+    /// suite met it as retrieval evidence of "[]" about one run in four. Autovacuum is switched
+    /// off for the table here so the pin does not depend on the vacuum daemon's timing; it goes
+    /// red with DELETE and green with TRUNCATE.
+    /// </summary>
+    [Fact]
+    public async Task ReingestingThirtyTimesStillRetrievesEverything()
+    {
+        await using (var cmd = pg.Db.CreateCommand("ALTER TABLE faq_document SET (autovacuum_enabled = false)"))
+            await cmd.ExecuteNonQueryAsync();
+        try
+        {
+            var embedder = new StubEmbedder(pg.Dimensions);
+            var store = new VectorStore(pg.Db);
+            for (int i = 0; i < 30; i++)
+                await Ingest.RunAsync(Repo.CorpusPath, embedder, store, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, CancellationToken.None);
+            var passages = await new Retriever(embedder, store, 8, 0).RetrieveAsync("anything", CancellationToken.None);
+            Assert.Equal(8, passages.Count);
+        }
+        finally
+        {
+            await using var cmd = pg.Db.CreateCommand("ALTER TABLE faq_document RESET (autovacuum_enabled)");
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+
     [Fact]
     public async Task ReingestingReplacesRatherThanDuplicates()
     {

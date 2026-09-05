@@ -13,7 +13,9 @@ incomparable.
 
 Ingestion runs at startup and *replaces* what it wrote last time rather than appending.
 Duplicates do not merely waste space: they crowd out distinct passages in the top-k window,
-so the model sees one answer four times instead of four different ones.
+so the model sees one answer four times instead of four different ones. How it replaces
+turned out to matter as much as that it does — see
+[the HNSW index remembers what you deleted](#the-hnsw-index-remembers-what-you-deleted).
 
 No text splitter, deliberately. An FAQ entry is already the unit a customer's question
 should match, and splitting one would separate a question from its answer.
@@ -116,6 +118,39 @@ and to say so rather than stretch an unrelated passage to fit. `NoSimilarityThre
 asserts the *overlap*, so if a future embedding model separates the populations the test
 fails and says to re-measure rather than quietly passing on a claim that has stopped being
 true. **Re-measure before setting it. Do not copy this 0 either.**
+
+### The HNSW index remembers what you deleted
+
+The first version of the reload was `DELETE FROM faq_document` followed by the inserts, in
+one transaction — the same shape the Go implementation uses. The test suite met the
+consequence as a turn whose retrieval evidence was `[]` in roughly one full run in four, and
+once in CI: retrieval had returned nothing while the table held all 36 rows.
+
+A DELETE leaves the old rows in the HNSW index as dead entries until VACUUM removes them, and
+an HNSW index scan is approximate: it collects `hnsw.ef_search` candidates (40 by default)
+by walking the graph and only then drops the ones whose heap tuples are dead. After enough
+reloads the graph is mostly dead entries, the forty candidates are mostly dead, and
+`ORDER BY embedding <=> $1 LIMIT 8` returns fewer than eight live rows. Reproduced in `psql`
+against pgvector 0.8.6, autovacuum disabled on the table so the daemon's timing is out of it:
+
+```
+30 × (BEGIN; DELETE FROM t; INSERT 36 identical rows; COMMIT)
+live rows: 36
+index scan, ORDER BY <=> LIMIT 8:   0 rows
+same query, enable_indexscan = off: 8 rows
+after VACUUM, index scan:           8 rows
+```
+
+Zero. Not fewer — none. With autovacuum on it is a race with the daemon, which is why the
+suite saw it one run in four rather than always, and why a deployment that restarts often
+between vacuums — a rollout, a crash loop — would see retrieval degrade and then recover with
+nothing in the logs. The reload is a `TRUNCATE` now, inside the same transaction: it rebuilds
+the index empty, and readers wait on its lock until the new rows are committed, which is the
+right trade for a 36-document load at startup.
+`ReingestingThirtyTimesStillRetrievesEverything` pins it with autovacuum off on the table; it
+is red with `DELETE` and green with `TRUNCATE`, and it was made red on purpose before it was
+kept. Both sibling implementations were told on the day, because the Go `Replace` has the
+same DELETE.
 
 ### What is not measured here
 

@@ -30,6 +30,7 @@ Anthropic Claude，可通过配置切换到 OpenAI 或 xAI。
 | .NET 上的进程内嵌入不需要原生构建步骤——ONNX Runtime 随 NuGet 包到位——代价换成了要自己写分词器 | [检索](docs/retrieval.md) |
 | 三个得分分布在这里的重叠与 Go 完全一致，所以阈值同样因测量而设为 0 | [检索](docs/retrieval.md#no-similarity-threshold-is-worth-setting-with-this-model) |
 | 枚举写成整数的 bug 第三次出现，这次经由管理 API；一个像分离前端那样读 JSON 文本的测试在打开浏览器之前就抓住了它 | [运营界面](docs/operations-admin.md#the-bug-that-arrived-through-a-third-door) |
+| 用 DELETE 重新导入语料会把旧行留在 HNSW 索引里当死条目，三十次重载后索引扫描在 36 行活数据上返回零行；测试套件约每四次遇到一次「检索证据为空」，改成 TRUNCATE 后消失 | [检索](docs/retrieval.md#the-hnsw-index-remembers-what-you-deleted) |
 | 在 kind 上，.NET 进程用 637 MiB 匿名内存装下同一个 470 MB 模型，Go 是 951，Java 超过 1400；Java 那一段差距有解释，Go 与 .NET 之间的那一段还没有人解释 | [体积](docs/footprint.md#memory-measured-on-kind) |
 | 认领和释放按钮什么也不做：React 处理函数读回了自己刚设的状态。五个先弹表单的操作都正常，两个直接点击的恰恰失败，只有真实浏览器看得见 | [运营界面](docs/operations-admin.md#verified-in-a-browser-and-what-it-found) |
 
