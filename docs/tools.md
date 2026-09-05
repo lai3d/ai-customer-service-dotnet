@@ -32,6 +32,15 @@ fix is one converter in `ToolJson.Options`; the test now asserts on the string t
 sees, and the finding is the general one: **anything written for the model has to be
 checked as text, not as the object it came from.**
 
+The Java implementation checked its own side the same day and found the silent version:
+enums were fine, but its two `LocalDate` fields went out as `[2026,9,3]`, and Claude had
+been reading the array as a date correctly for as long as that repository existed. Its
+demo screenshots were right; the system was relying on the model being generous with a
+format nobody chose, in the field where being wrong means telling a customer the wrong
+delivery date. The same bug is loud or silent depending on how charitable the reader is,
+and the silent one is the one that ships. `EveryFieldAToolWritesIsReadableAsText` walks
+every leaf of both tools' output and requires names and ISO dates, not codes and arrays.
+
 ### A missing thing is a value, not an error
 
 `lookup_order_status` returns `found: false` with a plain explanation. Throwing would put an

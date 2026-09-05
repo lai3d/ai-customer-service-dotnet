@@ -21,8 +21,8 @@ Anthropic Claude，可通过配置切换到 OpenAI 或 xAI。
 
 | | |
 | --- | --- |
-| Java 仓库归咎于「抽象层」的 token 记账泄漏，其实只属于一个框架：.NET 自己的统一对话抽象保住了调用边界，在本服务写下第一行之前已跨三家提供商量过 | [成本与故障](docs/reliability.md#the-abstraction-leak-was-one-frameworks-and-it-was-measured-before-this-repository-existed) |
 | 250 行的 C# 版 XLM-RoBERTa 分词器，74 组用例与 Rust 实现逐 id 一致，检索得分与 Go 实现精确到小数点后四位——因为对照夹具来自另一个实现，而不是同一份理解 | [检索](docs/retrieval.md#in-process-embedding-in-net-no-native-build-and-a-tokenizer-to-write) |
+| Java 仓库归咎于「抽象层」的 token 记账泄漏，其实只属于一个框架：.NET 自己的统一对话抽象保住了调用边界，在本服务写下第一行之前已跨三家提供商量过 | [成本与故障](docs/reliability.md#the-abstraction-leak-was-one-frameworks-and-it-was-measured-before-this-repository-existed) |
 | 工具结果也是提示词：序列化器把枚举写成了 `1`，模型说它无法解读编码状态，而所有测试都用同一个序列化器把 JSON 读了回来 | [工具调用](docs/tools.md#a-tool-result-is-prompt-too-and-the-serializer-did-not-know-that) |
 | GPT-5 把推理算进输出：一段五行的回答花了 1,325 个输出 token，Claude 是 178，Grok 是 101 | [对话提供商](docs/providers.md#what-only-a-live-call-found) |
 | 工具 span 被挂在发起它的模型调用之下，所有测试都通过，只有 Jaeger 里的链路树看得见 | [可观测性](docs/observability.md#the-tool-span-was-in-the-wrong-place-and-only-the-trace-said-so) |

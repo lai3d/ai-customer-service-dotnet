@@ -27,8 +27,8 @@ found a defect here, that is recorded too.
 
 | | |
 | --- | --- |
-| The token-accounting leak the Java repository blamed on "the abstraction" was one framework's: .NET's own unified chat abstraction keeps the call boundary, measured across three providers before a line of this service was written | [Cost and failure](docs/reliability.md#the-abstraction-leak-was-one-frameworks-and-it-was-measured-before-this-repository-existed) |
 | A 250-line C# port of the XLM-RoBERTa tokenizer matches the Rust one on 74 of 74 cases and the Go implementation's retrieval scores to four decimal places — because the fixture came from a different implementation, not from the same understanding | [Retrieval](docs/retrieval.md#in-process-embedding-in-net-no-native-build-and-a-tokenizer-to-write) |
+| The token-accounting leak the Java repository blamed on "the abstraction" was one framework's: .NET's own unified chat abstraction keeps the call boundary, measured across three providers before a line of this service was written | [Cost and failure](docs/reliability.md#the-abstraction-leak-was-one-frameworks-and-it-was-measured-before-this-repository-existed) |
 | A tool result is prompt: the serializer wrote an enum as `1`, the model said it could not translate a coded status, and every test had read the JSON back through the same serializer | [Tool calling](docs/tools.md#a-tool-result-is-prompt-too-and-the-serializer-did-not-know-that) |
 | GPT-5 bills its reasoning as output: 1,325 output tokens for a five-line answer that cost Claude 178 and Grok 101 | [Chat providers](docs/providers.md#what-only-a-live-call-found) |
 | The tool span was nested under the model call that asked for it, every test passed, and only the trace tree in Jaeger showed it | [Observability](docs/observability.md#the-tool-span-was-in-the-wrong-place-and-only-the-trace-said-so) |

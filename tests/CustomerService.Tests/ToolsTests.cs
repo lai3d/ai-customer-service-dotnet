@@ -95,6 +95,51 @@ public class ToolsTests
     }
 
     /// <summary>
+    /// Everything a tool writes is read by a model that has never seen the type, so the check
+    /// is on the text, field by field. Found live here as an enum written as 1; found in the
+    /// Java implementation the same day as a date written as [2026,9,3], which the model read
+    /// correctly for months -- the silent version of the same bug. Asserting on the object,
+    /// or reading the JSON back through the writer's serializer, would pass both.
+    /// </summary>
+    [Fact]
+    public async Task EveryFieldAToolWritesIsReadableAsText()
+    {
+        var order = await new OrderLookup().InvokeAsync("c", Args(new { orderNumber = "ORD-10042" }), CancellationToken.None);
+        var ticket = await new SupportTickets(10).InvokeAsync("c", Args(new { summary = "Refund for a lamp", category = "returns", orderNumber = "ORD-10045" }), CancellationToken.None);
+        foreach (var content in new[] { order.Content, ticket.Content })
+        {
+            using var doc = JsonDocument.Parse(content);
+            foreach (var (path, value) in Leaves(doc.RootElement, "$"))
+            {
+                Assert.True(value.ValueKind is JsonValueKind.String or JsonValueKind.True or JsonValueKind.False,
+                    $"{path} is {value.ValueKind} ({value.GetRawText()}); a model reads names and dates, not codes and arrays");
+                if (path.EndsWith("On") || path.EndsWith("Delivery") || path.EndsWith("At"))
+                    Assert.Matches(@"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?$", value.GetString());
+            }
+        }
+        Assert.Contains("\"status\":\"IN_TRANSIT\"", order.Content);
+        Assert.Contains("\"orderedOn\":\"2026-08-27\"", order.Content);
+        Assert.Contains("\"category\":\"returns\"", ticket.Content);
+    }
+
+    static IEnumerable<(string path, JsonElement value)> Leaves(JsonElement e, string path)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var p in e.EnumerateObject())
+                    foreach (var leaf in Leaves(p.Value, $"{path}.{p.Name}")) yield return leaf;
+                break;
+            case JsonValueKind.Array:
+                yield return (path, e);
+                break;
+            default:
+                yield return (path, e);
+                break;
+        }
+    }
+
+    /// <summary>
     /// Descriptions are prompt, not documentation: a rename or a dropped description changes
     /// model behaviour without changing anything else a test would notice.
     /// </summary>
