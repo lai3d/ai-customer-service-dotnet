@@ -35,6 +35,9 @@ data:
   # count, and each caller inside ONNX Runtime is a thread-pool thread blocked in native
   # code. An explicit number does not move when someone edits `resources`.
   EMBEDDING_MAX_CONCURRENCY: "4"
+  # Threads ONNX Runtime may use inside one forward pass. 1: with concurrent queries the
+  # runtime's default of one pool per pass oversubscribes the cores; see docs/benchmark.md.
+  EMBEDDING_INTRA_OP_THREADS: "1"
 
   # A conversation is an open-ended bill unless capped. 0 disables the cap.
   CONVERSATION_TOKEN_BUDGET: "200000"

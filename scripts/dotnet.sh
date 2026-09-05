@@ -14,5 +14,6 @@ exec docker run --rm -t \
   -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
   -e TESTCONTAINERS_RYUK_DISABLED=true \
   -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
+  -e BENCH -e BENCH_EMBEDDER -e BENCH_ORT_INTRA \
   ${DOTNET_CONTAINER_ARGS:-} \
   mcr.microsoft.com/dotnet/sdk:10.0 dotnet "$@"

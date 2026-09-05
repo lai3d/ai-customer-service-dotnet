@@ -78,10 +78,10 @@ third's took 11.
 
 ### What is not measured
 
-No load has been run, so nothing here says what a burst of a thousand arrivals does to
-thread-pool threads under a CPU limit — the question the Go benchmark answered for
-goroutines and the one that matters most for a runtime whose thread pool grows slowly on
-purpose. Listed in the README as not done.
+The load run is in [the benchmark](benchmark.md), in the SDK container without a CPU limit.
+Nothing here says what that burst does under the 2-CPU limit the manifest sets; the
+`ProcessorCount` the pod reports (2) is also the pool's minimum thread count there, so the
+starvation shape the benchmark describes would be sharper, not gentler.
 
 ---
 
