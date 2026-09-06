@@ -83,7 +83,16 @@ problem was rendered correctly, one line below the visible area. The same holds 
 failure after a long partial answer. Every error now goes through one function that
 appends and scrolls. The check that the error bubble sits inside the log's box was red on
 the old page before the fix and green after; the Go page, which this one is a copy of,
-has the same gap.
+had the same gap, measured there at 38 pixels below the fold and fixed the same way.
+
+What found the defect needs a browser; what keeps it fixed does not. The Go session's
+division, adopted here: `EveryErrorBubbleGoesThroughTheHelperThatScrolls` reads the page's
+code and asserts that the helper exists and scrolls and that no branch appends an error
+bubble outside it. It was made red both ways before it was trusted — one branch appending
+directly again, and the helper without its scroll — and it runs in CI, where a browser does
+not. What it cannot see is the log becoming a scrolling document rather than a scrolling
+element, where `scrollTop = scrollHeight` on the element silently does nothing; only the
+browser's rect check would, which is why that one stays.
 
 **A check that was red for the wrong reason.** The first version of the seam check read
 `textContent`, which joins block elements with nothing between them, so a correct page —
