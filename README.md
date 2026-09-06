@@ -39,6 +39,7 @@ found a defect here, that is recorded too.
 | Under a thousand concurrent requests, ONNX Runtime's default of one thread pool per forward pass put 73 OS threads on 18 cores; one intra-op thread cut p50 from 3451 ms to 1843 ms, and .NET's failure mode turned out to be latency for bystanders where Go's was threads | [Benchmark](docs/benchmark.md) |
 | Re-ingesting the corpus with DELETE leaves the old rows in the HNSW index as dead entries: zero of 36 live rows returned after thirty reloads of identical vectors, 7 of 8 after sixty reloads of distinct ones; the suite met it one run in four, both siblings re-measured it, and TRUNCATE fixed it | [Retrieval](docs/retrieval.md#the-hnsw-index-remembers-what-you-deleted) |
 | On kind, the .NET process holds the same 470 MB model in 637 MiB of anonymous memory where Go holds it in 951 and Java in over 1400; the two-thirds of that gap the Java side explains, the Go–.NET third nobody has yet | [Footprint](docs/footprint.md#memory-measured-on-kind) |
+| A refused request's error was rendered correctly one line below the visible area: the page scrolled for messages and answer chunks but never for errors. A 4,001-character message found it, the check was red before the fix, and the shared Go page has the same gap | [The demo UI](docs/demo-ui.md#verified-in-a-browser-and-what-it-found) |
 | Claim and release did nothing: a React handler read state it had just set. The five actions that open a form worked; the two that act on a bare click were exactly the two that failed, and only a real browser showed it | [The operations surface](docs/operations-admin.md#verified-in-a-browser-and-what-it-found) |
 
 ---
@@ -243,7 +244,7 @@ Two model calls, because the model asked for the tool and then answered with its
 | [Footprint](docs/footprint.md) | What the image and the process cost, measured on kind beside the Go and Java numbers |
 | [Benchmark](docs/benchmark.md) | A thousand concurrent requests against the thread pool, and the two knobs that decide what a native call costs |
 | [Kubernetes](k8s/README.md) | Manifests applied unmodified on kind by a harness that asserts twenty-five things, and the memory sweep that sized them |
-| [The demo UI](docs/demo-ui.md) | The Go implementation's glass box, shared on purpose |
+| [The demo UI](docs/demo-ui.md) | The Go implementation's glass box, shared on purpose, driven in a browser here |
 | [The operations surface](docs/operations-admin.md) | Staff login, the ticket loop, turn records, answer feedback and audit, with the frontend deployed separately |
 
 ---
@@ -275,8 +276,8 @@ a full ticket cycle; the one defect it found is recorded.
   measured natively; there is no .NET SDK on this machine by design, so the .NET rows ran in
   the SDK container under Docker Desktop. Same silicon, different OS, a hypervisor between —
   read the .NET rows against each other first.
-- **The demo page is the Go implementation's and has not been driven in a browser here.**
-  The wire contract it consumes has been.
+- **The demo page's browser walk is a script run by hand**, two live turns and one refused
+  request per run; the post-commit error path is pinned by tests but no browser has watched it.
 - **Knowledge editing and publication is not built**, as in both siblings: it changes the one
   fixture that keeps the three implementations comparable. Answer feedback stops at a
   conclusion.
