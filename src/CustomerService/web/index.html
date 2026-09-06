@@ -105,6 +105,16 @@ const el = (tag, cls, text) => {
   return n;
 };
 
+// Every failure the page shows goes through here, and it scrolls the log to the message.
+// The log scrolls itself when a user message is appended and as answer chunks arrive, but
+// it did not when an error was appended -- so a refusal after a long message, or a failure
+// after a long partial answer, landed below the fold where the customer would not see it.
+// Found by driving the page in a real browser with a message the server refuses.
+const showError = (text) => {
+  log.append(el('div', 'msg err', text));
+  log.scrollTop = log.scrollHeight;
+};
+
 // The model writes markdown -- bold spans and hyphen lists in almost every reply -- and
 // the page used to show the asterisks and hyphens to the customer, verbatim. Found by
 // driving the page in a real browser; no test would have noticed, because the text was
@@ -243,7 +253,7 @@ form.addEventListener('submit', async (e) => {
     if (!res.ok) {
       const problem = await res.json().catch(() => ({title: 'Request failed'}));
       bubble.remove();
-      log.append(el('div', 'msg err', `${problem.title}: ${problem.detail || ''}`));
+      showError(`${problem.title}: ${problem.detail || ''}`);
       return;
     }
 
@@ -285,14 +295,14 @@ form.addEventListener('submit', async (e) => {
         else if (name === 'usage') renderUsage(payload.usage);
         else if (name === 'error') {
           const detail = payload.detail ? `：${payload.detail}` : '';
-          log.append(el('div', 'msg err', `${payload.title || 'Error'}${detail}`));
+          showError(`${payload.title || 'Error'}${detail}`);
         }
       }
     }
     if (!answer) bubble.remove();
   } catch (err) {
     bubble.remove();
-    log.append(el('div', 'msg err', 'The connection failed: ' + err.message));
+    showError('The connection failed: ' + err.message);
   } finally {
     send.disabled = false;
     input.focus();

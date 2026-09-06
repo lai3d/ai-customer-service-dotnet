@@ -46,13 +46,58 @@ the streamed events and in what is persisted, so the next turn does not re-send 
 run-together message as history. `TextFromTwoModelCallsIsNotRunTogether` pins it, and the
 first live turn against Claude exercised it: the model narrated before calling the tool.
 
-### Not yet verified in a browser
+### Verified in a browser, and what it found
 
-The Go page was driven in a headless Chromium and timed frame by frame; this one has not
-been. What has been verified is the wire: the stream from a live turn parsed into
-`retrieval`, `tool`, 57 `message` and one `usage` frame, in that order, with the reply in
-Chinese for a Chinese question. Font fallback, layout and anything gated on a real display
-are unverified here.
+Driven in a headless Chrome at 1440×950 by `scripts/drive-demo.mjs` against the Compose
+stack, sampling the DOM every 120 ms, on two live turns and one refused request. Two runs
+of the order question, because the model chose differently each time:
+
+```
+The model narrated first ("I'll look up your order first.")
+   161 ms   retrieval card — 8 passages, scores, relative bars
+  1146 ms   the first word of the answer — the first model call's sentence
+  1888 ms   tool pill — lookup_order_status → found
+  5090 ms   usage card — claude-opus-5, model calls 2
+
+The model went straight to the tool
+   169 ms   retrieval card
+  6533 ms   tool pill
+  7512 ms   the first word of the answer
+  9600 ms   usage card — model calls 2
+```
+
+The second-turn question, in Chinese with nothing for a tool to do: retrieval at 152 ms,
+the first word at 2.2–3.2 s, one model call, the answer in Chinese with the earlier order
+carried as context. Both turns rendered the model's markdown as DOM — 5 paragraphs, 4 list
+items and 2 bold spans on the order turn, no asterisk or hyphen in the visible text — and
+the seam between the two model calls was a paragraph break: *"I'll look up your order
+first."* then a new paragraph, not `first.Your order`. The score bars ran from 100% down to
+18%. The Jaeger link on the usage card resolved to a trace with three spans. No console
+error, no failed request other than the one the run provokes.
+
+**What it found: a refusal landed below the fold.** The page scrolls the log when a user
+message is appended and as answer chunks arrive. It did not scroll when an error was
+appended. A message the server refuses before committing — 4,001 characters against a
+4,000 limit — fills the log with the customer's own text, and the *Message too long*
+problem was rendered correctly, one line below the visible area. The same holds for a
+failure after a long partial answer. Every error now goes through one function that
+appends and scrolls. The check that the error bubble sits inside the log's box was red on
+the old page before the fix and green after; the Go page, which this one is a copy of,
+has the same gap.
+
+**A check that was red for the wrong reason.** The first version of the seam check read
+`textContent`, which joins block elements with nothing between them, so a correct page —
+two `<p>` elements — read as `first.Your order` and failed. It reads `innerText` now,
+where a block boundary is a newline. A red check is a claim about the page, and the first
+thing to do with it is find out whether it is the page or the check.
+
+**Not covered.** A failure *after* the response is committed — budget exhausted, provider
+error mid-answer — is not provoked live; the server's `error` frame is pinned by
+`TheStreamCarriesTypedEventsInOrder` and the page's dispatch by
+`TheDemoPageDispatchesOnTheEventName`, and the new scroll goes through the same function,
+but no browser has watched that path. Headless, with a throwaway profile: font fallback and
+anything gated on a real display are not covered. And this is a script run by hand, not a
+CI job, because it spends two real model calls per run.
 
 ---
 

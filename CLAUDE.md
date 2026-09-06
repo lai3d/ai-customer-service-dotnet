@@ -205,6 +205,7 @@ edit the number.**
 | Throughput, latency, pool and OS threads under 1000 concurrent requests | `make bench` (one process per variant; inside the SDK container) |
 | Memory limit sweep and cgroup peaks | `k8s/kind/sweep.sh`, `k8s/kind/verify.sh` footprint block |
 | Live turns, usage per call, trace shape | `docs/reliability.md`, `docs/observability.md` |
+| The demo page in a real browser: timing, markdown, the seam, a refused request | `scripts/drive-demo.mjs` (by hand, against the Compose stack; two live turns) |
 
 `RAG_SIMILARITY_THRESHOLD` is **0** and `EMBEDDING_INTRA_OP_THREADS` is **1**; both are
 measurements, not omissions -- the second cut the benchmark's p50 by 47% because ONNX
