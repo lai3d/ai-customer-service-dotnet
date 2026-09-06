@@ -231,6 +231,30 @@ public class DemoPageTests
         Assert.DoesNotContain("switch (payload.type)", Html);
     }
 
+    /// <summary>
+    /// The log scrolled for user messages and answer chunks but never for errors, so a refusal
+    /// after a long message rendered correctly below the fold. What found that needs a browser
+    /// (scripts/drive-demo.mjs checks the bubble's rect inside the log's); what keeps it fixed
+    /// does not: every error bubble goes through one helper, and that helper scrolls. Red both
+    /// ways -- a branch appending directly again, or the helper losing its scroll. What this
+    /// cannot see is the log becoming a scrolling document instead of a scrolling element,
+    /// where the assignment silently does nothing; only the browser check would.
+    /// </summary>
+    [Fact]
+    public void EveryErrorBubbleGoesThroughTheHelperThatScrolls()
+    {
+        var helperStart = Code.IndexOf("const showError = (text) => {", StringComparison.Ordinal);
+        Assert.True(helperStart >= 0, "the page has no showError helper");
+        var helper = Code[helperStart..Code.IndexOf("};", helperStart, StringComparison.Ordinal)];
+        Assert.Contains("'msg err'", helper);
+        Assert.Contains("log.scrollTop = log.scrollHeight", helper);
+
+        var outsideHelper = Code.Remove(helperStart, helper.Length);
+        Assert.DoesNotContain("'msg err'", outsideHelper);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(outsideHelper, @"showError\(").Count >= 3,
+            "the three failure branches (refused before commit, error event, connection failed) should each call showError");
+    }
+
     [Fact]
     public void TheRendererDoesNotBuildLinks()
     {
